@@ -11,19 +11,32 @@ import {
   atomicAdd, atomicLoad, atomicStore, atomicSub, atomicMax, atomicMin, instancedArray, hash, workgroupArray, workgroupBarrier,
   localId, workgroupId, select,
 } from 'three/tsl';
-import { NODE_SOLID, NODE_EXTERIOR, NODE_OPENING_IN, NODE_OPENING_OUT, MAX_OPENINGS, MAX_ROOMS } from '../voxel.js';
+import { NODE_SOLID, NODE_EXTERIOR, NODE_OPENING_IN, NODE_OPENING_OUT, MAX_OPENINGS, MAX_ROOMS, NO_ROOM } from '../voxel.js';
 
 const FIX = 65536; // アトミック加算用の固定小数点の倍率（WebGPU の atomic は整数のみ）
 const WG = 256; // ワークグループのスレッド数
 const MOMENTS = 10; // 質量, Σx, Σy, Σz, Σxx, Σyy, Σzz, Σxy, Σyz, Σzx
 export const OPEN_FREE = 0, OPEN_INFLOW = 1, OPEN_CLOSED = 2; // 開口部の状態（格子点の境界条件）
-const C_FREE_TOP = 0, C_HIGH = 1, C_KILLED = 2; // counters の添字
+const C_FREE_TOP = 0, C_HIGH = 1, C_KILLED = 2, C_REVERT = 3; // counters の添字（REVERT は壁にめり込んで戻した回数、診断用）
+
+/**
+ * 状態方程式の剛性と安定な時間刻み（SSOT）。深さ depth [m] の水が compression だけ縮む剛性にする。
+ * 音速 c = √(k/ρ₀) [セル/s]、時間刻み dt ≤ cfl / c。
+ * 弱圧縮性なので、水柱が自重で縮んだ分だけ上下に「呼吸」する振動（周期 ~0.3 s、変位 数 cm）が残る。
+ * 剛性を上げるほど振動が速く減衰しにくい（実測）。12% なら水深 5 m で水面が ~30 cm 低く見える程度で、揺れも穏やか
+ */
+export function fluidParams(h, ppc, { depth = 5, compression = 0.12, cfl = 0.3 } = {}) {
+  const g = 9.81 / h, d = depth / h;
+  const stiffness = (ppc * g * d) / compression;
+  const soundSpeed = Math.sqrt(stiffness / ppc);
+  return { stiffness, soundSpeed, dtMax: cfl / soundSpeed };
+}
 
 /**
  * @param {THREE.WebGPURenderer} renderer
  * @param {{ dims: number[], ppc?: number, maxParticles: number, stiffness: number, viscosity?: number }} opt
  */
-export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, viscosity = 0.05, maxSpawn = 16384 }) {
+export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, viscosity = 0.3, bulkViscosity = 40, maxSpawn = 16384 }) {
   const [nx, ny, nz] = dims;
   const N = nx * ny * nz, P = maxParticles;
   // ワークグループ内で同期（workgroupBarrier）するカーネルは、全スレッドが揃っていないと未定義動作になる
@@ -56,6 +69,7 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     maxSpeed: uniform(100),
     stiffness: uniform(stiffness),
     viscosity: uniform(viscosity),
+    bulk: uniform(bulkViscosity), // 体積粘性。弱圧縮性の水柱が上下に伸び縮みする音響振動を減衰させる（流れのずれには効かない）
     spawnTotal: uniform(0, 'int'),
     seed: uniform(0),
   };
@@ -125,17 +139,22 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     for (const s of st) density.addAssign(s.weight.mul(unfx(atomicLoad(gridI.element(s.index.mul(4))))));
     density.assign(max(density, rho0 * 0.05));
     vel.element(instanceIndex).w.assign(density.div(rho0));
-    // Tait 型の状態方程式。負圧は出さない（自由表面で粒子がくっつくのを防ぐ）
-    const r = density.div(rho0), r2 = r.mul(r), r4 = r2.mul(r2);
-    const pressure = max(0, u.stiffness.mul(r4.mul(r2).mul(r).sub(1))).toVar();
+    // 線形の状態方程式 p = k (ρ/ρ₀ − 1)。音速が圧縮で変わらないので時間刻みの安定条件が一定。
+    // Tait 型（7 乗）は局所的に圧縮された瞬間に音速が跳ね上がって安定条件を超え、水全体が周期的に跳ねた。
+    // 負圧は出さない（自由表面で粒子がくっつくのを防ぐ）
+    const pressure = max(0, u.stiffness.mul(density.div(rho0).sub(1))).toVar();
     const C0 = cCol(instanceIndex, 0).xyz, C1 = cCol(instanceIndex, 1).xyz, C2 = cCol(instanceIndex, 2).xyz;
-    // 応力 = −p I + μ (C + Cᵀ)。列ごとに持つ
-    const S0 = vec3(C0.x.mul(2), C0.y.add(C1.x), C0.z.add(C2.x)).mul(u.viscosity).sub(vec3(pressure, 0, 0)).toVar();
-    const S1 = vec3(C1.x.add(C0.y), C1.y.mul(2), C1.z.add(C2.y)).mul(u.viscosity).sub(vec3(0, pressure, 0)).toVar();
-    const S2 = vec3(C2.x.add(C0.z), C2.y.add(C1.z), C2.z.mul(2)).mul(u.viscosity).sub(vec3(0, 0, pressure)).toVar();
-    const k = float(-4).mul(u.dt).div(density).toVar(); // −体積 · 4/Δx² · dt（粒子質量 1）
+    // 応力 = −p I + μ (C + Cᵀ) + λ tr(C) I（ニュートン流体、λ = 体積粘性）。列ごとに持つ。
+    // 運動量への換算に掛ける体積は、圧力には実際の体積 1/ρ、粘性の項には静止時の体積 1/ρ₀ を使う。
+    // 粘性にも 1/ρ を使うと、水面やしぶきの低密度の粒子で体積が 10〜20 倍になり陽解法の安定限界を超えて発散した（第 1 船倉で実測）
+    const kp = float(-4).mul(u.dt).div(density), kv = float(-4 / rho0).mul(u.dt);
+    const vis = u.viscosity.mul(kv), bulkTerm = u.bulk.mul(C0.x.add(C1.y).add(C2.z)).mul(kv);
+    const pk = pressure.mul(kp).negate().toVar(); // −p I · kp
+    const S0 = vec3(C0.x.mul(2), C0.y.add(C1.x), C0.z.add(C2.x)).mul(vis).add(vec3(bulkTerm.add(pk), 0, 0)).toVar();
+    const S1 = vec3(C1.x.add(C0.y), C1.y.mul(2), C1.z.add(C2.y)).mul(vis).add(vec3(0, bulkTerm.add(pk), 0)).toVar();
+    const S2 = vec3(C2.x.add(C0.z), C2.y.add(C1.z), C2.z.mul(2)).mul(vis).add(vec3(0, 0, bulkTerm.add(pk))).toVar();
     for (const s of st) {
-      const f = matMul(S0, S1, S2, s.dist).mul(s.weight.mul(k)).toVar();
+      const f = matMul(S0, S1, S2, s.dist).mul(s.weight).toVar();
       const g = s.index.mul(4).toVar();
       atomicAdd(gridI.element(g.add(1)), fx(f.x));
       atomicAdd(gridI.element(g.add(2)), fx(f.y));
@@ -185,19 +204,9 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     // 1 サブステップで 0.5 セル未満しか動かないよう速度を抑える（壁の厚さ 1 セルをすり抜けない条件）
     const sp = length(v);
     If(sp.greaterThan(u.maxSpeed), () => { v.mulAssign(u.maxSpeed.div(sp)); });
+    const xOld = x.toVar();
     x.addAssign(v.mul(u.dt));
     x.assign(clamp(x, vec3(1.001), vec3(nx - 1.001, ny - 1.001, nz - 1.001)));
-
-    // 船外（外側の格子点）に出た粒子は消す
-    const ci = int(x.x).add(int(x.y).mul(strideY)).add(int(x.z).mul(strideZ));
-    const type = nodeInfo.element(ci).w;
-    If(type.equal(NODE_EXTERIOR).or(type.greaterThanEqual(NODE_OPENING_OUT)), () => {
-      p.w.assign(0);
-      const slot = atomicAdd(counters.element(C_FREE_TOP), 1);
-      freeStack.element(slot).assign(pid);
-      atomicAdd(counters.element(C_KILLED), 1);
-      Return();
-    });
 
     // 壁からの押し出し（距離場を三線形補間）
     const q = x.sub(0.5).toVar();
@@ -208,8 +217,15 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
       const wx = i ? f.x : float(1).sub(f.x), wy = j ? f.y : float(1).sub(f.y), wz = k ? f.z : float(1).sub(f.z);
       acc.addAssign(sdf.element(b.add(i + j * strideY + k * strideZ)).mul(wx.mul(wy).mul(wz)));
     }
+    // 押し出しの基準は「固体の格子点の中心から R 以上離す」（格子点のセルの中かどうかではない。セルの角は中心から 0.87 離れていて、
+    // セルで判定すると押し出し済みの粒子まで戻してしまい、壁際で押し出しと戻しが綱引きして水全体が周期的に跳ねた）
     const R = 0.52;
-    If(acc.w.lessThan(R), () => {
+    If(acc.w.lessThan(0.25), () => {
+      // 深くめり込んだ（勾配が当てにならない）: 動く前の位置へ戻す
+      x.assign(xOld);
+      v.mulAssign(0.5);
+      atomicAdd(counters.element(C_REVERT), 1);
+    }).ElseIf(acc.w.lessThan(R), () => {
       const n = acc.xyz.toVar();
       const nl = length(n);
       If(nl.greaterThan(1e-4), () => {
@@ -218,6 +234,23 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
         const vn = dot(v, n);
         If(vn.lessThan(0), () => { v.subAssign(n.mul(vn)); });
       });
+    });
+    // 開口部の外側に出た粒子: 開放（海面より上）の開口ならこぼれ出た水として消す。流入中・閉じた開口なら戻す（外側は距離場の固体に
+    // 含めていないので押し出しでは止まらない）。水が船から出られるのは開口部だけ
+    const ci = int(x.x).add(int(x.y).mul(strideY)).add(int(x.z).mul(strideZ));
+    const type = nodeInfo.element(ci).w.toVar();
+    If(type.greaterThanEqual(NODE_OPENING_OUT), () => {
+      const outMode = open.state.element(int(type).sub(NODE_OPENING_OUT).clamp(0, MAX_OPENINGS - 1)).w;
+      If(outMode.equal(OPEN_FREE), () => {
+        p.w.assign(0);
+        const slot = atomicAdd(counters.element(C_FREE_TOP), 1);
+        freeStack.element(slot).assign(pid);
+        atomicAdd(counters.element(C_KILLED), 1);
+        Return();
+      });
+      x.assign(xOld);
+      v.mulAssign(0.5);
+      atomicAdd(counters.element(C_REVERT), 1);
     });
     p.assign(vec4(x, 1));
     vel.element(pid).assign(vec4(v, vel.element(pid).w));
@@ -237,8 +270,12 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     If(slot.greaterThanEqual(P), () => { Return(); });
     const s = float(i).add(u.seed);
     const r1 = hash(s.mul(1.37).add(0.11)).mul(2).sub(1), r2 = hash(s.mul(2.71).add(0.53)).mul(2).sub(1);
-    const xp = open.center.element(k).xyz.add(open.ax.element(k).xyz.mul(r1)).add(open.ay.element(k).xyz.mul(r2));
-    pos.element(slot).assign(vec4(clamp(xp, vec3(1.001), vec3(nx - 1.001, ny - 1.001, nz - 1.001)), 1));
+    const lo = vec3(1.001), hi = vec3(nx - 1.001, ny - 1.001, nz - 1.001);
+    const xp = clamp(open.center.element(k).xyz.add(open.ax.element(k).xyz.mul(r1)).add(open.ay.element(k).xyz.mul(r2)), lo, hi).toVar();
+    // 曲がった外板では生成範囲の角が船外・壁にはみ出す。そこに置くと動けなくなるので開口の中心に置き直す
+    const t0 = nodeInfo.element(int(xp.x).add(int(xp.y).mul(strideY)).add(int(xp.z).mul(strideZ))).w;
+    If(t0.equal(NODE_SOLID).or(t0.equal(NODE_EXTERIOR)).or(t0.greaterThanEqual(NODE_OPENING_OUT)), () => { xp.assign(clamp(open.center.element(k).xyz, lo, hi)); });
+    pos.element(slot).assign(vec4(xp, 1));
     vel.element(slot).assign(vec4(open.vel.element(k).xyz, 1));
     cCol(slot, 0).assign(vec4(0)); cCol(slot, 1).assign(vec4(0)); cCol(slot, 2).assign(vec4(0));
   })().compute(maxSpawn, [WG]);
@@ -280,7 +317,13 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     const p = pos.element(instanceIndex);
     If(p.w.greaterThan(0.5), () => {
       const ci = int(p.x).add(int(p.y).mul(strideY)).add(int(p.z).mul(strideZ));
-      atomicAdd(hist.element(roomOf.element(ci)), 1);
+      const r = roomOf.element(ci).toVar();
+      // 壁際の粒子は壁の格子点のセル（部屋なし）に入っていることがある。距離場の勾配（壁から離れる向き）の先の格子点の部屋にする
+      If(r.equal(NO_ROOM), () => {
+        const y = p.xyz.add(sdf.element(ci).xyz.mul(0.8));
+        r.assign(roomOf.element(int(y.x).add(int(y.y).mul(strideY)).add(int(y.z).mul(strideZ))));
+      });
+      atomicAdd(hist.element(r), 1);
     });
     workgroupBarrier();
     If(l.lessThan(MAX_ROOMS), () => { atomicAdd(roomAcc.element(l), atomicLoad(hist.element(l))); });
@@ -291,9 +334,11 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
   let latest = null, pending = false, frame = 0;
 
   const upload = (node, data) => { const a = node.value; a.array.set(data); a.needsUpdate = true; };
-  function setGrid({ info, dist, rooms }) {
+  // packForGpu の結果を受け取る。sdf は格子点ごとの vec4（法線 xyz + 距離）。スカラーの dist を渡すと押し出しが効かず粒子が壁を抜ける
+  function setGrid({ info, sdf: field, rooms }) {
+    if (info.length !== N * 4 || field.length !== N * 4 || rooms.length !== N) throw new Error('setGrid: 格子の大きさが合わない');
     upload(nodeInfo, info);
-    upload(sdf, dist);
+    upload(sdf, field);
     upload(roomOf, rooms);
   }
 
@@ -339,7 +384,7 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
       const high = c[C_HIGH];
       hwUpper = Math.max(Math.min(hwUpper, P), high); // GPU の値が確定したら上界を締める（生成中の分は hwUpper が持つ）
       latest = {
-        high, free: c[C_FREE_TOP], killed: c[C_KILLED], alive: high - c[C_FREE_TOP],
+        high, free: c[C_FREE_TOP], killed: c[C_KILLED], reverts: c[C_REVERT], alive: high - c[C_FREE_TOP],
         roomMass: Array.from(new Int32Array(rooms)), // 粒子の数
         moments: mom, center: [nx / 2, ny / 2, nz / 2],
       };

@@ -8,7 +8,7 @@ import { createStage, WebGPUUnavailable } from './render/stage.js';
 import { createSim, SEABED_Y, RHO, ENVELOPE_VOLUME, SHIP_MASS, DT } from './sim.js';
 import { buildShipGrid, breachAt, gridSpec } from './shipgrid.js';
 import { packForGpu, MAX_OPENINGS } from './voxel.js';
-import { createFluid, OPEN_FREE, OPEN_INFLOW, OPEN_CLOSED } from './gpu/fluid.js';
+import { createFluid, fluidParams, OPEN_FREE, OPEN_INFLOW, OPEN_CLOSED } from './gpu/fluid.js';
 import * as F from './flooding.js';
 import { waterMassProps, openingParams } from './coupling.js';
 import * as W from './waves.js';
@@ -54,9 +54,7 @@ async function main() {
   const Q = QUALITY[settings.quality];
   const h = Q.h, spec = gridSpec(h);
   const particleVolume = h ** 3 / PPC; // 粒子 1 個の水の体積 [m³]
-  const stiffness = (PPC * 9.81 * 5) / (h * h * 7 * 0.07);
-  const soundSpeed = Math.sqrt((7 * stiffness) / PPC); // [セル/s]
-  const dtMax = 0.35 / soundSpeed; // 流体の安定な時間刻み [s]
+  const { stiffness, dtMax } = fluidParams(h, PPC); // 水深 5 m で 7% 縮む剛性と、その音速で安定な時間刻み
 
   $('loadingMsg').textContent = 'GPU を初期化中…';
   let stage;
