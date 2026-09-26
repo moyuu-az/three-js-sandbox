@@ -20,6 +20,7 @@ import { createFluidRenderer } from './render/fluidRender.js';
 import { createFx, createTorpedo, P } from './render/fx.js';
 import { createProfile } from './ui/profile.js';
 import { createChart } from './ui/chart.js';
+import { nextFrameAt } from './frameCap.js';
 
 // 画質: 格子間隔 h と粒子の上限。剛性と安定な時間刻みは h から fluidParams（gpu/fluid.js、圧縮率の SSOT）で決まる
 const QUALITY = {
@@ -275,15 +276,14 @@ async function main() {
   const mp = RHO * particleVolume; // 粒子 1 個の質量 [kg]
 
   let lastFrameAt = 0;
-  const FRAME_MS = 1000 / 60;
   // forced: 検証用に実時間でなく決まった時間だけ進める
   function frame(now = performance.now(), forced = 0) {
-    // 高リフレッシュレートの画面でも 60 fps を上限にする（GPU の負荷を必要以上に上げない）
-    // 描画の予定時刻を FRAME_MS ずつ進める（now を記録すると、144 Hz では 3 回に 1 回 = 48 fps に落ちる）。
-    // 1.5 ms: vsync の揺らぎで 60 Hz の画面の 1 回を取りこぼさないように。遅れが 1 回分を超えたら追いつかず今から数え直す
+    // 高リフレッシュレートの画面でも 60 fps を上限にする（GPU の負荷を必要以上に上げない）。
+    // forced では予定時刻を進めない（advance(600) のように連続で呼ぶと、予定時刻が実時間より先へ行って rAF の描画が止まる）
     if (!forced) {
-      if (now - lastFrameAt < FRAME_MS - 1.5) return;
-      lastFrameAt = Math.max(lastFrameAt + FRAME_MS, now - FRAME_MS);
+      const next = nextFrameAt(lastFrameAt, now);
+      if (next === null) return;
+      lastFrameAt = next;
     }
     clock.update();
     const real = forced || Math.min(clock.getDelta(), 1 / 20);
