@@ -42,10 +42,11 @@ export async function createStage(container, { seabedY, allowWebGL = false }) {
   controls.target.set(0, 2, 0);
 
   // ---------- 空・太陽・環境光 ----------
-  const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 24), THREE.MathUtils.degToRad(-140));
+  // 太陽は既定のカメラ（右舷前方の上）の背後寄り: 逆光だと海面の照り返しが画面を白く覆う
+  const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 32), THREE.MathUtils.degToRad(55));
   const sky = new SkyMesh();
   sky.scale.setScalar(5000);
-  sky.turbidity.value = 3.2; sky.rayleigh.value = 1.4; sky.mieCoefficient.value = 0.004; sky.mieDirectionalG.value = 0.86;
+  sky.turbidity.value = 2.2; sky.rayleigh.value = 1.2; sky.mieCoefficient.value = 0.003; sky.mieDirectionalG.value = 0.84;
   sky.cloudCoverage.value = 0.35; sky.cloudDensity.value = 0.5;
   sky.sunPosition.value.copy(sunDir);
   scene.add(sky);
@@ -117,7 +118,7 @@ export async function createStage(container, { seabedY, allowWebGL = false }) {
   function createPipeline(composite) {
     const scenePass = pass(scene, camera);
     const color = composite(scenePass.getTextureNode('output'), scenePass.getViewZNode(), envRT.texture);
-    const glow = bloom(color, 0.12, 0.35, 2.8); // 太陽の照り返しや灯火だけ光らせる（空全体にかけると白くかすむ）
+    const glow = bloom(color, 0.07, 0.3, 4.0); // 太陽の照り返しや灯火だけ光らせる（空全体にかけると白くかすむ）
     const pipeline = new THREE.RenderPipeline(renderer);
     pipeline.outputColorTransform = false;
     pipeline.outputNode = fxaa(renderOutput(color.add(glow)));

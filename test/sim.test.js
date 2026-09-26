@@ -140,3 +140,24 @@ test('流体への見かけの重力: 静止時は船体座標で真下 g、傾�
   const g = sim.fluidFrame().gravity;
   assert.ok(Math.abs(g.x) > 1, `船体座標で横向き成分 ${g.toArray()}`);
 });
+
+test('流体への見かけの重力: 傾いて落ち着いた船では、低い舷・低い船首へ向く（水が坂を下る向き）', async () => {
+  // 姿勢を瞬間的に書き換えると浮力が急変して並進加速度が混ざるので、水の偏りで静かに傾けて落ち着かせてから見る
+  const sim = await createSim();
+  run(sim, 2);
+  sim.setWater(roomWater(['船室 左1', '船室 左2', '船室 左3']));
+  run(sim, 30);
+  const roll = sim.state().rollDeg;
+  assert.ok(roll < -1, `左舷（+x）が下がる roll=${roll}`);
+  const g = sim.fluidFrame().gravity;
+  const expect = 9.81 * Math.sin((-roll * Math.PI) / 180);
+  assert.ok(g.x > 0 && Math.abs(g.x - expect) < 0.3, `重力の x 成分は +x（低い左舷）向きで g·sin(傾斜) に近い: ${g.x} vs ${expect}`);
+  const sim2 = await createSim();
+  run(sim2, 2);
+  sim2.setWater(roomWater(['第1船倉'], 3.4));
+  run(sim2, 40);
+  const pitch = sim2.state().pitchDeg;
+  assert.ok(pitch < -0.5, `船首が下がる pitch=${pitch}`);
+  const g2 = sim2.fluidFrame().gravity;
+  assert.ok(g2.z > 0 && Math.abs(g2.z - 9.81 * Math.sin((-pitch * Math.PI) / 180)) < 0.3, `重力の z 成分は +z（低い船首）向き: ${g2.z}`);
+});
