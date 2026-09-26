@@ -21,7 +21,7 @@ import { createFx, createTorpedo, P } from './render/fx.js';
 import { createProfile } from './ui/profile.js';
 import { createChart } from './ui/chart.js';
 
-// 画質: 格子間隔 h と粒子の上限。剛性は「水深 5 m で約 7% 圧縮」になる値（音速 → 安定な時間刻み）
+// 画質: 格子間隔 h と粒子の上限。剛性と安定な時間刻みは h から fluidParams（gpu/fluid.js、圧縮率の SSOT）で決まる
 const QUALITY = {
   light: { h: 0.36, max: 131072, subCap: 4 },
   standard: { h: 0.3, max: 262144, subCap: 5 },
@@ -55,7 +55,7 @@ async function main() {
   const Q = QUALITY[settings.quality];
   const h = Q.h, spec = gridSpec(h);
   const particleVolume = h ** 3 / PPC; // 粒子 1 個の水の体積 [m³]
-  const { stiffness, dtMax } = fluidParams(h, PPC); // 水深 5 m で 7% 縮む剛性と、その音速で安定な時間刻み
+  const { stiffness, dtMax } = fluidParams(h, PPC); // 剛性と、その音速で安定な時間刻み（圧縮率は fluidParams の既定値）
 
   $('loadingMsg').textContent = 'GPU を初期化中…';
   let stage;
