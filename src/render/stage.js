@@ -113,6 +113,9 @@ export async function createStage(container, { seabedY, allowWebGL = false }) {
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
+    // ブラウザのズームや別の画面への移動で devicePixelRatio が変わる。流体の RT（main.js の resize）は
+    // renderer.getPixelRatio() を読むので、このリスナーが先に登録されている前提で揃う
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     renderer.setSize(innerWidth, innerHeight);
   });
 
