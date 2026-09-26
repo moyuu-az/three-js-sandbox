@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>沈没シミュレーション</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #0c3a52; font: 14px system-ui, sans-serif; }
+    #hud { position: fixed; top: 12px; left: 12px; max-width: calc(100vw - 48px); padding: 10px 12px; background: rgb(8 16 24 / .72); color: #fff; border-radius: 8px; backdrop-filter: blur(4px); }
+    #hud .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    #hud pre { margin: 8px 0 0; font: 12px/1.45 ui-monospace, monospace; }
+    #msg { margin-top: 6px; color: #ffd27a; min-height: 1em; }
+    .hint { margin-top: 6px; color: #9fb4c4; font-size: 12px; }
+    button { font: inherit; padding: 4px 10px; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./node_modules/three/build/three.module.js",
+        "three/addons/": "./node_modules/three/examples/jsm/",
+        "@dimforge/rapier3d-compat": "./node_modules/@dimforge/rapier3d-compat/dist/rapier.mjs"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="hud">
+    <div class="row">
+      <button id="fire">魚雷発射</button>
+      <label><input type="checkbox" id="fast" /> 4倍速</label>
+      <label><input type="checkbox" id="cut" /> 断面表示</label>
+      <button onclick="location.reload()">リセット</button>
+    </div>
+    <div class="hint">船体をクリックすると、その位置に魚雷を撃ちます</div>
+    <div id="msg"></div>
+    <pre id="info"></pre>
+  </div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
