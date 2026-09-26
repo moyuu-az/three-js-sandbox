@@ -17,7 +17,7 @@ function roomRect(r) {
   const zc = (Math.max(b.z[0], H.Z_MIN) + Math.min(b.z[1], H.Z_MAX)) / 2;
   const z0 = Math.max(b.z[0], H.Z_MIN + 0.3), z1 = Math.min(b.z[1], H.Z_MAX - 0.6);
   let y0 = Lo.resolveY(b.y[0], zc), y1 = Lo.resolveY(b.y[1], zc);
-  if (y0 === Lo.DECK2 && b.x[0] > -90 && b.x[1] < 90 || (y0 === Lo.DECK2 && r.comp === 'H2')) {
+  if (r.comp === 'H2' && y0 === Lo.DECK2) {
     const lane = b.x[0] >= 0.5 ? 2 : b.x[1] <= -0.5 ? 0 : 1; // 0 右舷, 1 通路, 2 左舷
     const hgt = (y1 - y0) / 3;
     y0 = y0 + lane * hgt; y1 = y0 + hgt;

@@ -18,7 +18,6 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
     originX: uniform(origin[0]),
     h: uniform(h),
     texel: uniform(new THREE.Vector2(1, 1)),
-    blurDir: uniform(new THREE.Vector2(1, 0)),
     focal: uniform(1),
     sunDirView: uniform(new THREE.Vector3(0, 1, 0)),
     speedScale: uniform(1 / 4), // 粒子表示の色: この速さ [m/s] で最も明るい色
@@ -101,25 +100,30 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
   const rtB = rtA.clone();
 
   // ---- 3) 深度のぼかし（境界を保つ、縦横に分けて 2 回） ----
+  // 入力テクスチャと方向ごとに材質を分ける（1 フレーム内で同じ材質のテクスチャを差し替えると、バインドの更新が追いつかないことがある）
   const R = 7;
-  const blurSrc = texture(rtDepth.texture);
-  const blurMat = new THREE.NodeMaterial();
-  blurMat.fragmentNode = Fn(() => {
-    const c = blurSrc.sample(screenUV).r.toVar();
-    // 粒子半径の 1.6 倍の幅を画面上の画素数に直し、R 段で割った間隔でサンプルする
-    const px = clamp(u.radius.mul(1.6).mul(u.focal).div(max(c, 0.01)).div(R), 0.35, 3.0);
-    const sum = float(0).toVar(), wsum = float(0).toVar();
-    const sigD = u.radius.mul(2.5);
-    for (let i = -R; i <= R; i++) {
-      const s = blurSrc.sample(screenUV.add(u.blurDir.mul(u.texel).mul(px.mul(i)))).r;
-      const wd = s.sub(c).div(sigD);
-      const w = select(s.greaterThan(0), float(Math.exp(-(i * i) / (2 * (R / 2) ** 2))).mul(exp(wd.mul(wd).negate())), float(0));
-      sum.addAssign(s.mul(w)); wsum.addAssign(w);
-    }
-    // 水の無い画素は 0 のまま（ぼかしで水を広げない）
-    return vec4(select(c.greaterThan(0), sum.div(max(wsum, 1e-5)), float(0)), 0, 0, 1);
-  })();
-  const quad = new THREE.QuadMesh(blurMat);
+  const makeBlur = (srcRT, dir) => {
+    const src = texture(srcRT.texture);
+    const m = new THREE.NodeMaterial();
+    m.fragmentNode = Fn(() => {
+      const c = src.sample(screenUV).r.toVar();
+      // 粒子半径の 1.6 倍の幅を画面上の画素数に直し、R 段で割った間隔でサンプルする
+      const px = clamp(u.radius.mul(1.6).mul(u.focal).div(max(c, 0.01)).div(R), 0.35, 3.0);
+      const sum = float(0).toVar(), wsum = float(0).toVar();
+      const sigD = u.radius.mul(2.5);
+      const stepUV = vec2(dir[0], dir[1]).mul(u.texel).mul(px);
+      for (let i = -R; i <= R; i++) {
+        const s = src.sample(screenUV.add(stepUV.mul(i))).r;
+        const wd = s.sub(c).div(sigD);
+        const w = select(s.greaterThan(0), float(Math.exp(-(i * i) / (2 * (R / 2) ** 2))).mul(exp(wd.mul(wd).negate())), float(0));
+        sum.addAssign(s.mul(w)); wsum.addAssign(w);
+      }
+      // 水の無い画素は 0 のまま（ぼかしで水を広げない）
+      return vec4(select(c.greaterThan(0), sum.div(max(wsum, 1e-5)), float(0)), 0, 0, 1);
+    })();
+    return new THREE.QuadMesh(m);
+  };
+  const blurPasses = [[makeBlur(rtDepth, [1, 0]), rtA], [makeBlur(rtA, [0, 1]), rtB], [makeBlur(rtB, [1, 0]), rtA], [makeBlur(rtA, [0, 1]), rtB]];
 
   function resize(w, hh, dpr) {
     const W = Math.floor(w * dpr), Hh = Math.floor(hh * dpr);
@@ -151,14 +155,7 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
     depthSprite.visible = false; thickSprite.visible = true;
     renderer.setRenderTarget(rtThick); renderer.clear(); renderer.render(passScene, camera);
     thickSprite.visible = false;
-    blurSrc.value = rtDepth.texture; u.blurDir.value.set(1, 0);
-    renderer.setRenderTarget(rtA); quad.render(renderer);
-    blurSrc.value = rtA.texture; u.blurDir.value.set(0, 1);
-    renderer.setRenderTarget(rtB); quad.render(renderer);
-    blurSrc.value = rtB.texture; u.blurDir.value.set(1, 0);
-    renderer.setRenderTarget(rtA); quad.render(renderer);
-    blurSrc.value = rtA.texture; u.blurDir.value.set(0, 1);
-    renderer.setRenderTarget(rtB); quad.render(renderer);
+    for (const [quad, target] of blurPasses) { renderer.setRenderTarget(target); quad.render(renderer); }
     renderer.setRenderTarget(prevRT);
     renderer.setClearColor(clear, prevAlpha);
   }

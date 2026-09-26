@@ -24,8 +24,9 @@ export async function createStage(container, { seabedY, allowWebGL = false }) {
   if (!allowWebGL && !renderer.backend.isWebGPUBackend) throw new WebGPUUnavailable('WebGPU を初期化できず WebGL に切り替わりました');
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   renderer.setSize(innerWidth, innerHeight);
-  renderer.toneMapping = THREE.AgXToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  // 空（SkyMesh）の輝度が高いので露出を絞る。ACES は AgX より彩度が残り、船体の塗装色が白っぽく飛ばない
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.5;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   container.append(renderer.domElement);
@@ -62,7 +63,7 @@ export async function createStage(container, { seabedY, allowWebGL = false }) {
   const sun = new THREE.DirectionalLight(0xfff0d8, 3.2);
   sun.castShadow = true;
   sun.shadow.mapSize.set(4096, 4096);
-  Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 140 });
+  Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 160 });
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.03;
   scene.add(sun, sun.target);

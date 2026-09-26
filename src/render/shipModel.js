@@ -57,6 +57,7 @@ export function buildShipModel({ h, draft }) {
   const cut = new THREE.ClippingGroup(); // 断面表示で切る部分（船体・船内・上部構造）
   cut.clippingPlanes = [new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0)];
   cut.enabled = false;
+  cut.clipShadows = true; // 切り取った半分が影を落とすと、断面から見た船内が真っ暗になる
   group.add(cut);
   const B = batcher();
   const snapZ = (z) => snapPlane(z, 'z', h), snapX = (x) => snapPlane(x, 'x', h), snapY = (y) => snapPlane(y, 'y', h);

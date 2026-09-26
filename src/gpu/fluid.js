@@ -14,7 +14,6 @@ import {
 import { NODE_SOLID, NODE_EXTERIOR, NODE_OPENING_IN, NODE_OPENING_OUT, MAX_OPENINGS, MAX_ROOMS } from '../voxel.js';
 
 const FIX = 65536; // アトミック加算用の固定小数点の倍率（WebGPU の atomic は整数のみ）
-const ROOM_FIX = 256;
 const WG = 256; // ワークグループのスレッド数
 const MOMENTS = 10; // 質量, Σx, Σy, Σz, Σxx, Σyy, Σzz, Σxy, Σyz, Σzx
 export const OPEN_FREE = 0, OPEN_INFLOW = 1, OPEN_CLOSED = 2; // 開口部の状態（格子点の境界条件）
@@ -27,6 +26,8 @@ const C_FREE_TOP = 0, C_HIGH = 1, C_KILLED = 2; // counters の添字
 export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, viscosity = 0.05, maxSpawn = 16384 }) {
   const [nx, ny, nz] = dims;
   const N = nx * ny * nz, P = maxParticles;
+  // ワークグループ内で同期（workgroupBarrier）するカーネルは、全スレッドが揃っていないと未定義動作になる
+  if (P % WG !== 0) throw new Error(`maxParticles は ${WG} の倍数にする（${P}）`);
   const rho0 = ppc;
 
   // ---------- バッファ ----------
@@ -261,7 +262,6 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     const vals = [m, m.mul(r.x), m.mul(r.y), m.mul(r.z), m.mul(r.x).mul(r.x), m.mul(r.y).mul(r.y), m.mul(r.z).mul(r.z),
       m.mul(r.x).mul(r.y), m.mul(r.y).mul(r.z), m.mul(r.z).mul(r.x)];
     vals.forEach((v, q) => shared[q].element(l).assign(v));
-    If(m.greaterThan(0), () => { atomicAdd(roomAcc.element(roomOf.element(min(i, N - 1))), int(m.mul(ROOM_FIX))); });
     workgroupBarrier();
     for (let s = WG / 2; s > 0; s >>= 1) {
       If(l.lessThan(s), () => { for (const sh of shared) sh.element(l).addAssign(sh.element(l.add(s))); });
@@ -269,6 +269,22 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     }
     If(l.equal(0), () => { shared.forEach((sh, q) => partials.element(int(workgroupId.x).mul(MOMENTS).add(q)).assign(sh.element(int(0)))); });
   })().compute(nWG * WG, [WG]);
+
+  // 部屋ごとの水量: 粒子をその位置の格子点の部屋で数える。格子の質量で数えると、壁の格子点に配られた分（壁際の粒子の
+  // 質量の 1〜2 割）がどの部屋にも入らず水位を低く見積もる。ワークグループ内で数えてから全体に足す（アトミックの競合を減らす）
+  const hist = workgroupArray('int', MAX_ROOMS).toAtomic();
+  const roomCount = Fn(() => {
+    const l = int(localId.x);
+    If(l.lessThan(MAX_ROOMS), () => { atomicStore(hist.element(l), 0); });
+    workgroupBarrier();
+    const p = pos.element(instanceIndex);
+    If(p.w.greaterThan(0.5), () => {
+      const ci = int(p.x).add(int(p.y).mul(strideY)).add(int(p.z).mul(strideZ));
+      atomicAdd(hist.element(roomOf.element(ci)), 1);
+    });
+    workgroupBarrier();
+    If(l.lessThan(MAX_ROOMS), () => { atomicAdd(roomAcc.element(l), atomicLoad(hist.element(l))); });
+  })().compute(P, [WG]);
 
   // ---------- CPU 側の管理 ----------
   let hwUpper = 0; // 粒子の添字の上限（GPU の highWater の CPU 側の上界。ディスパッチ数に使う）
@@ -293,6 +309,7 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
       renderer.compute(g2p, count);
     }
     renderer.compute([clearRooms, stats]);
+    renderer.compute(roomCount, count);
     // 開口部ごとの生成数を添字順の累積数にする（spawn カーネルはこれで自分の開口部を探す）
     const per = new Array(MAX_OPENINGS).fill(0);
     for (const s of spawns) per[s.opening] += Math.max(0, s.count | 0);
@@ -323,7 +340,7 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
       hwUpper = Math.max(Math.min(hwUpper, P), high); // GPU の値が確定したら上界を締める（生成中の分は hwUpper が持つ）
       latest = {
         high, free: c[C_FREE_TOP], killed: c[C_KILLED], alive: high - c[C_FREE_TOP],
-        roomMass: Array.from(new Int32Array(rooms), (v) => v / ROOM_FIX),
+        roomMass: Array.from(new Int32Array(rooms)), // 粒子の数
         moments: mom, center: [nx / 2, ny / 2, nz / 2],
       };
     } finally {

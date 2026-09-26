@@ -10,7 +10,7 @@ import { buildShipGrid, breachAt, gridSpec } from './shipgrid.js';
 import { packForGpu, MAX_OPENINGS } from './voxel.js';
 import { createFluid, OPEN_FREE, OPEN_INFLOW, OPEN_CLOSED } from './gpu/fluid.js';
 import * as F from './flooding.js';
-import * as MP from './massprops.js';
+import { waterMassProps, openingParams } from './coupling.js';
 import * as W from './waves.js';
 import * as Lo from './layout.js';
 import * as H from './hull.js';
@@ -112,11 +112,11 @@ async function main() {
   addEventListener('resize', resize);
 
   // ---------- 表示モード ----------
-  let view = 'cutaway', cutSide = 0, follow = true;
+  let view = 'exterior', cutSide = 0, follow = true;
   const shipMats = model.materials;
   void shipMats;
   const setView = (v) => { view = v; model.cut.enabled = v === 'cutaway'; };
-  setView('cutaway');
+  setView('exterior');
 
   // ---------- 魚雷 ----------
   let run = null;
@@ -274,17 +274,6 @@ async function main() {
   const camLocal = new THREE.Vector3(), tmp = new THREE.Vector3(), q = new THREE.Quaternion();
   const mp = RHO * particleVolume; // 粒子 1 個の質量 [kg]
 
-  // GPU の集計（格子座標のモーメント）を船体座標・kg の質量特性に直す
-  function waterMassProps(st) {
-    const m = st.moments, n = m[0];
-    if (!(n > 0.5)) return { mass: 0, com: [0, 0, 0], inertia: [0, 0, 0, 0, 0, 0] };
-    const a = [0, 1, 2].map((i) => spec.origin[i] + st.center[i] * h);
-    const s1 = [0, 1, 2].map((i) => mp * (n * a[i] + h * m[1 + i]));
-    const sq = (i) => mp * (n * a[i] * a[i] + 2 * h * a[i] * m[1 + i] + h * h * m[4 + i]);
-    const cr = (i, j, k) => mp * (n * a[i] * a[j] + h * (a[i] * m[1 + j] + a[j] * m[1 + i]) + h * h * m[k]);
-    return MP.fromMoments(n * mp, s1, [sq(0), sq(1), sq(2), cr(0, 1, 7), cr(1, 2, 8), cr(2, 0, 9)]);
-  }
-
   let lastFrameAt = 0;
   // forced: 検証用に実時間でなく決まった時間だけ進める
   function frame(now = performance.now(), forced = 0) {
@@ -303,7 +292,7 @@ async function main() {
 
     // 1) 流体の集計 → 船の質量特性
     const st = fluid.stats;
-    const wm = st ? waterMassProps(st) : null;
+    const wm = st ? waterMassProps(st.moments, st.center, spec, mp) : null;
     if (wm) sim.setWater(wm);
 
     // 2) 船の運動（固定刻み）
@@ -326,12 +315,8 @@ async function main() {
     let inflow = 0;
     flows = built.openings.map((o, k) => {
       const f = F.openingFlow(o, { toWorld: (p) => sim.toWorld(p), sea: sim.sea, up, level: levels[o.room] });
-      const dir = o.normal.map((c) => (-c * f.speed) / h);
-      const toG = (p) => [(p[0] - spec.origin[0]) / h, (p[1] - spec.origin[1]) / h, (p[2] - spec.origin[2]) / h];
-      fluid.setOpening(k, {
-        mode: f.mode === 'inflow' ? OPEN_INFLOW : f.mode === 'free' ? OPEN_FREE : OPEN_CLOSED,
-        inflow: dir, center: toG(o.spawn.center), ax: o.spawn.ax.map((c) => c / h), ay: o.spawn.ay.map((c) => c / h), spawnVel: dir,
-      });
+      const mode = f.mode === 'inflow' ? OPEN_INFLOW : f.mode === 'free' ? OPEN_FREE : OPEN_CLOSED;
+      fluid.setOpening(k, openingParams(o, { ...f, mode }, spec));
       if (f.q > 0 && dt > 0) {
         const s = F.particlesFor(f.q, dt, particleVolume, carry[k]);
         carry[k] = s.carry;
