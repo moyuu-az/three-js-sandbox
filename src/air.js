@@ -117,9 +117,12 @@ export function airVolumes(capacity, water, levels) {
 
 /**
  * 同じまとまりの部屋の圧力をそろえる（空気量の合計を体積で割る）。満水の部屋は空気を失い、圧力はゲージ 0（水の圧力は
- * つながった水で決まる）。水に押されて体積が減った分だけ圧力が上がる（ボイルの法則）
+ * つながった水で決まる）。水に押されて体積が減った分だけ圧力が上がる（ボイルの法則）。
+ * pMax [atm]: 空気を押し縮められる上限。水が空気を押せるのは入ってくる水の圧力（開口の最も深い点の水圧）までで、それを
+ * 超えるなら空気のほうが水を押し返すか開口から泡で抜ける（どちらもここでは空気が抜けたことにする）。
+ * 水量の見積もりの揺れで空気の体積が 0 近くになったときに、圧力が跳ね上がって偽の破断を起こさないための物理的な上限でもある
  */
-export function equalize(air, groupOf, vAir) {
+export function equalize(air, groupOf, vAir, pMax = P_MAX) {
   const n = vAir.length, sumA = new Float64Array(n), sumV = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     if (vAir[i] === null) { air.amount[i] = 0; continue; }
@@ -129,7 +132,7 @@ export function equalize(air, groupOf, vAir) {
   for (let i = 0; i < n; i++) {
     if (vAir[i] === null) { air.pressure[i] = 1; continue; }
     const g = groupOf[i];
-    const p = Math.min(P_MAX, Math.max(0.05, sumA[g] / sumV[g]));
+    const p = Math.min(P_MAX, pMax, Math.max(0.05, sumA[g] / sumV[g]));
     air.pressure[i] = p;
     air.amount[i] = p * vAir[i];
   }
@@ -192,6 +195,8 @@ export function worstLoad(env, ctx) {
   let best = null;
   for (let i = 0; i < room.length; i++) {
     const r = room[i], o = i * STRIDE;
+    // 満水の部屋は空気が無く、中の水の圧力はつながった水（破口の先の海）で決まるので、外とほぼ釣り合っている
+    if (levels[r] === Infinity || !Number.isFinite(gauge[r])) continue;
     const x = data[o], y = data[o + 1], z = data[o + 2];
     const yw = m[1] * x + m[5] * y + m[9] * z + m[13];
     if (!seaY.has(r)) seaY.set(r, ctx.seaY(r));

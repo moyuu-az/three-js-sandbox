@@ -15,6 +15,8 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
   const u = {
     radius: uniform(spacing * 0.75), // 描画する球の半径 [m]
     cutSide: uniform(0),
+    peelY: uniform(1e3), // 甲板を外す表示: 船体座標でこの高さより上の水は描かない（外した甲板・部屋と一緒に消す）
+    originY: uniform(origin[1]),
     originX: uniform(origin[0]),
     h: uniform(h),
     texel: uniform(new THREE.Vector2(1, 1)),
@@ -32,11 +34,12 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
   mainAnchor.matrixAutoUpdate = false;
   const anchorLocal = new THREE.Matrix4().compose(new THREE.Vector3(...origin), new THREE.Quaternion(), new THREE.Vector3(h, h, h));
 
-  // 生きていて、断面表示で切り取る側にない粒子だけ描く（大きさ 0 で消す）
+  // 生きていて、断面表示で切り取る側にも、外した甲板より上にもない粒子だけ描く（大きさ 0 で消す）
   const visible = Fn(() => {
     const p = pos.element(instanceIndex);
     const lx = u.originX.add(p.x.mul(u.h));
-    return p.w.greaterThan(0.5).and(u.cutSide.equal(0).or(lx.mul(u.cutSide).lessThan(0)));
+    const ly = u.originY.add(p.y.mul(u.h));
+    return p.w.greaterThan(0.5).and(u.cutSide.equal(0).or(lx.mul(u.cutSide).lessThan(0))).and(ly.lessThan(u.peelY));
   });
   const spriteScale = select(visible(), u.radius.mul(2).div(u.h), float(0));
 
@@ -136,7 +139,8 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
   const tmpM = new THREE.Matrix4(), clear = new THREE.Color();
   let mode = 'surface';
   // 船の行列を反映して、深度・厚み・ぼかしを描く（本体の描画の前に呼ぶ）
-  function render(camera, shipMatrix, { cutSide = 0, sunDir, under = false }) {
+  function render(camera, shipMatrix, { cutSide = 0, peelY = 1e3, sunDir, under = false }) {
+    u.peelY.value = peelY;
     u.underwater.value = under ? 1 : 0;
     for (const a of [anchor, mainAnchor]) { a.matrix.multiplyMatrices(shipMatrix, anchorLocal); a.matrixWorld.copy(a.matrix); }
     // OrbitControls.update() の直後は matrixWorldInverse が前フレームの向きのまま（sunDirView がずれる）

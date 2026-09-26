@@ -141,7 +141,7 @@ export function buildShipGrid(h, state = {}) {
     if (!(state.seaOpenings?.[o.id] ?? o.open)) continue;
     carve(o, { id: o.id, name: o.name, kind: o.kind });
   }
-  (state.breaches ?? []).forEach((b, i) => carve(b, { id: `b${i}`, name: `破口 ${i + 1}`, kind: 'breach', breach: i }));
+  (state.breaches ?? []).forEach((b, i) => carve(b, { id: `b${i}`, name: b.name ?? `破口 ${i + 1}`, kind: b.kind ?? 'breach', breach: i }));
 
   // 部屋ごとの容積（格子点数 × h³）
   const capacity = new Float64Array(Lo.ROOMS.length);
@@ -152,16 +152,32 @@ export function buildShipGrid(h, state = {}) {
   return { grid, openings, capacity };
 }
 
+// 法線 n の面に張る単位ベクトル u, v。u: 法線と上向きの外積（前後方向）、v: 法線と u の外積（おおむね上下）。
+// 法線がほぼ上下（甲板）なら u は船の横方向
+function faceAxes(n) {
+  let u = Math.abs(n[1]) > 0.9 ? [1, 0, 0] : [-n[2], 0, n[0]];
+  const ul = Math.hypot(...u) || 1;
+  u = u.map((a) => a / ul);
+  const v = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+  return { u, v };
+}
+
 // 舷側の点 (x, y, z) に大きさ w × hgt の破口を開ける情報。u は船の前後方向に沿う
 export function breachAt(x, y, z, w = 1.6, hgt = 1.2) {
   const side = x >= 0 ? 1 : -1;
   const hb = H.halfBreadth(z, y);
   const c = [side * Math.max(0, hb), y, z];
   const n = H.surfaceNormal(c[0], y, z);
-  // u: 法線と上向きの外積（前後方向）、v: 法線と u の外積（おおむね上下）
-  let u = [n[1] * 0 - n[2] * 1, n[2] * 0 - n[0] * 0, n[0] * 1 - n[1] * 0];
-  const ul = Math.hypot(...u) || 1;
-  u = u.map((a) => a / ul);
-  const v = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
-  return { center: c, normal: n, u, v, half: [w / 2, hgt / 2] };
+  return { center: c, normal: n, ...faceAxes(n), half: [w / 2, hgt / 2] };
+}
+
+/**
+ * 空気圧・水圧で外板が破れた穴。p: 外板の点（air.envelopePoints）、axis: 格子の面の向き（船外向き）。
+ * 舷側なら船体の曲面の法線を使う。甲板・甲板室の壁は格子の向きのまま
+ */
+export function ruptureAt(p, axis, size = 0.8, meta = {}) {
+  const onHull = Math.abs(axis[1]) < 0.5 && H.inside(p[0] - axis[0] * 0.2, p[1], p[2] - axis[2] * 0.2) && !Lo.inHouse(p[0], p[1], p[2]);
+  let n = onHull ? H.surfaceNormal(p[0], p[1], p[2]) : axis;
+  if (!(Math.abs(Math.hypot(...n) - 1) < 1e-3)) n = axis;
+  return { center: [...p], normal: n, ...faceAxes(n), half: [size / 2, size / 2], ...meta };
 }

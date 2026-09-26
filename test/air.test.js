@@ -77,6 +77,14 @@ test('ボイル: 満水の部屋は空気を持たず、ゲージ圧 0（圧力�
   assert.equal(air.pressure[0], 1);
 });
 
+test('ボイル: 入ってくる水の圧力（pMax）より高くは縮まず、超えた分の空気は抜ける', () => {
+  const air = A.createAir([10]);
+  // 水 9.5 m³ → 体積 0.5 m³ で 20 気圧になるはずのところ、開口の水圧が 1.3 気圧までなら 1.3 気圧で止まる
+  A.equalize(air, [0], A.airVolumes([10], [9.5], [3]), 1.3);
+  near(air.pressure[0], 1.3, 1e-12);
+  near(air.amount[0], 1.3 * 0.5, 1e-12, '空気量も上限に合わせて減る（抜けた）');
+});
+
 test('ボイル: 水で空気の体積が 0 に近づいても圧力は上限で止まり、NaN にならない', () => {
   const air = A.createAir([10]);
   A.equalize(air, [0], A.airVolumes([10], [10 - 1e-9], [5]));
@@ -213,4 +221,6 @@ test('外板の荷重: 深く沈んだ密閉の空の部屋は内向き、閉じ
   // 水が入って外と釣り合っていれば、水面より下の外板にはほとんど力がかからない
   w = A.worstLoad(env, { m: m(-10), seaY: () => 0, up, levels: [4], gauge: [RHO_G * 6] });
   near(w.dp, RHO_G * 6 - RHO_G * 5, 1e-6, '天井: 空気 6 m 水頭 − 外 5 m');
+  // 満水の部屋（水位 +∞）は除く。水頭が無限大になって必ず「破れる」判定にならないこと
+  assert.equal(A.worstLoad(env, { m: m(-10), seaY: () => 0, up, levels: [Infinity], gauge: [0] }), null);
 });

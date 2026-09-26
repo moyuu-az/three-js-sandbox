@@ -70,8 +70,17 @@
       <div class="group-title">表示</div>
       <div class="seg wide" id="viewMode">
         <button data-v="exterior" class="on">外観</button>
-        <button data-v="cutaway">断面</button>
+        <button data-v="xray" title="手前の外板・甲板・壁だけを透かし、船内を立体のまま見る">透視</button>
+        <button data-v="cutaway" title="船の中心線で縦に切る（側面図）">断面</button>
       </div>
+      <div class="group-title">甲板を外す（透視・断面）</div>
+      <div class="seg wide" id="peel">
+        <button data-p="none" class="on">なし</button>
+        <button data-p="house" title="甲板室・船橋・マストを外す">上部構造</button>
+        <button data-p="deck" title="上甲板を外して居住区・機関室を上から見る">上甲板</button>
+        <button data-p="deck2" title="第 2 甲板も外して船倉を上から見る">第2甲板</button>
+      </div>
+      <label class="check"><input type="checkbox" id="labelsOn" checked /> 部屋の名前・浸水率・空気圧を表示</label>
       <div class="group-title">船内の水</div>
       <div class="seg wide" id="waterMode">
         <button data-w="surface" class="on">水面</button>
@@ -100,6 +109,11 @@
       <div class="group-title">海況</div>
       <div class="seg wide" id="seaState"></div>
       <div class="hint">波は船の浮力（CPU）と海面の描画（GPU）で同じ成分を使っています。荒天では船内の水も揺さぶられます。</div>
+      <div class="group-title">空気圧と構造の強さ</div>
+      <label class="check"><input type="checkbox" id="ruptureOn" checked /> 空気圧・水圧で外板が破れる</label>
+      <label class="field">構造の強さ <output id="strengthOut">×1.0</output>
+        <input type="range" id="strength" min="0.3" max="2" step="0.1" value="1" /></label>
+      <div class="hint">閉じ込められた空気は水に押されて縮み、流入を押し返します（エアクッション）。内外の圧力差が強度を超えると、閉じたハッチ・扉 → 甲板室の壁 → 上甲板 → 外板の順に破れ、空気が抜けて一気に浸水します。</div>
     </section>
   </aside>
 
@@ -112,6 +126,8 @@
       <div class="metric"><span>浸水量</span><b id="mWater">-</b></div>
       <div class="metric"><span>流入量</span><b id="mInflow">-</b></div>
       <div class="metric"><span>予備浮力</span><b id="mReserve">-</b></div>
+      <div class="metric" title="閉じ込められた空気のゲージ圧（大気圧との差）の最大"><span>船内の空気圧</span><b id="mAir">-</b></div>
+      <div class="metric" title="外板・甲板・閉じた開口にかかる内外の圧力差 ÷ 強度 の最大。100% で破れる"><span>外板の負荷</span><b id="mLoad">-</b></div>
     </div>
     <div class="reserve"><i id="reserveBar"></i></div>
     <canvas id="chart" width="560" height="220" role="img" aria-label="横傾斜・トリム・浸水量の推移"></canvas>
@@ -135,7 +151,10 @@
       <ul>
         <li><b>ドラッグ</b>: 視点の回転 ／ <b>右ドラッグ</b>: 平行移動 ／ <b>ホイール</b>: ズーム</li>
         <li><b>船体をクリック</b>: その位置に魚雷。破口から海水が噴き込みます</li>
-        <li><b>断面表示</b>: 手前半分を切り取り、船内の部屋と水の動きを見ます</li>
+        <li><b>W A S D</b>: カメラを前後左右に移動 ／ <b>Q E</b>: 下降・上昇 ／ <b>Shift</b>: 速く</li>
+        <li><b>透視表示</b>: カメラの側の外板・甲板・壁だけを透かし、船内の部屋と水を立体のまま見ます（回り込むと透かす面が変わります）。<b>甲板を外す</b>で上から部屋に入れます</li>
+        <li><b>断面表示</b>: 船の中心線で縦に切った側面図です</li>
+        <li><b>空気圧</b>: 閉じ込められた空気は水に押されて縮み、流入を押し返します。内外の圧力差が強度を超えると外板や閉じたハッチが破れます（環境タブで強さを変えられます）</li>
         <li><b>水密扉</b>: 左パネルか下の区画図の扉アイコンで開閉。閉めれば浸水は区画内に留まります</li>
         <li>水は GPU 上の粒子法（MLS-MPM）で解いており、扉・ハッチ・階段を通って実際に流れます。船の傾きや揺れは船内の水に見かけの力として伝わり、水の重さと重心は船の運動に戻ります</li>
       </ul>

@@ -54,13 +54,14 @@ export function createFx(scene, sim, shipGroup, max = 40000) {
   }
 
   // under: カメラが水中。海面の泡は下から見ると明るすぎるので薄くする
-  // cut: 断面表示で手前の海面を切り取っている範囲 { side, inv（ワールド → 船体座標）, x, z }。そこでは海面の泡を描かない
-  // （海面が無いので泡だけ宙に浮いて見える）
+  // cut: 断面・透視表示で手前の海面を切り取っている範囲 { dir: [dx, dz]（船体座標の水平の向き）, inv（ワールド → 船体座標）, x, z }。
+  // そこでは海面の泡を描かない（海面が無いので泡だけ宙に浮いて見える）。範囲の形は ocean.js の inCutBox と同じ
   const lp = new THREE.Vector3();
   const inCut = (cut, x, y, z) => {
-    if (!cut || !cut.side) return false;
+    if (!cut || !cut.dir) return false;
     lp.set(x, y, z).applyMatrix4(cut.inv);
-    return lp.x * cut.side > -0.5 && lp.x * cut.side < cut.x && Math.abs(lp.z) < cut.z;
+    const a = lp.x * cut.dir[0] + lp.z * cut.dir[1], b = lp.z * cut.dir[0] - lp.x * cut.dir[1];
+    return a > -0.5 && a < cut.x && Math.abs(b) < cut.z;
   };
   // 船体の内側（船体座標で外殻の中）に入った煙・しぶきは描かない。断面表示で船内に爆発の煙が漂って見えるのを防ぐ
   const shipInv = new THREE.Matrix4();
@@ -138,6 +139,38 @@ export function createFx(scene, sim, shipGroup, max = 40000) {
     });
   }
 
+  // 開口から抜ける船内の空気: 水中なら泡の柱、海面より上なら噴き出す霧。airFlows: 開口ごとの流量 [m³/s、1 気圧換算、正 = 流出]
+  const airDebt = new Map();
+  function emitAir(dt, openings, airFlows, toWorld) {
+    openings.forEach((o, i) => {
+      const q = airFlows[i] ?? 0;
+      if (!(q > 0.02)) return;
+      const w = toWorld(o.spawn.center);
+      const nW = new THREE.Vector3(...o.normal).applyQuaternion(shipGroup.quaternion);
+      const sea = sim.sea(w[0], w[2]);
+      const r = Math.sqrt(o.area) * 0.5;
+      let n = (airDebt.get(o) ?? 0) + Math.min(600, 40 * q) * dt;
+      for (; n >= 1; n--) {
+        const x = w[0] + nW.x * 1.0 + rnd(r), y = w[1] + nW.y * 1.0 + rnd(r), z = w[2] + nW.z * 1.0 + rnd(r);
+        const jet = Math.min(12, 2 + q * 0.8);
+        if (y < sea - 0.2) emit(P.BUBBLE, x, y, z, nW.x * jet * 0.3 + rnd(0.5), 0.5 + Math.max(0, nW.y) * jet * 0.3, nW.z * jet * 0.3 + rnd(0.5), 1 + Math.min(1.5, q * 0.05));
+        else if (Math.random() < 0.5) emit(P.MIST, x, y, z, nW.x * jet + rnd(0.6), nW.y * jet + 0.5, nW.z * jet + rnd(0.6), 0.3);
+      }
+      airDebt.set(o, n);
+    });
+  }
+
+  // 外板が破れた瞬間: 水中なら大きな泡の塊、海面より上なら破片のしぶきと霧。outward: 中から外へ（破裂）/ 外から中へ（圧潰）
+  function burst(p, n, { outward = true, submerged = true, size = 1 } = {}) {
+    const s = outward ? 1 : -0.3; // 圧潰は水が中へ吸い込まれ、泡は少し遅れて外へ出る
+    if (submerged) {
+      for (let k = 0; k < 900 * size; k++) emit(P.BUBBLE, p.x + n.x * 0.8 + rnd(0.6), p.y + n.y * 0.8 + rnd(0.6), p.z + n.z * 0.8 + rnd(0.6), n.x * s * 4 + rnd(2), 1 + Math.random() * 2, n.z * s * 4 + rnd(2), 1.4);
+    } else {
+      for (let k = 0; k < 500 * size; k++) emit(P.SPLASH, p.x + rnd(0.3), p.y + rnd(0.3), p.z + rnd(0.3), n.x * s * 9 + rnd(3), Math.abs(n.y) * 6 + 2 + rnd(2), n.z * s * 9 + rnd(3));
+      for (let k = 0; k < 40 * size; k++) emit(P.MIST, p.x + rnd(0.5), p.y + rnd(0.5), p.z + rnd(0.5), n.x * 3 + rnd(1), 1 + n.y * 3, n.z * 3 + rnd(1), 0.8);
+    }
+  }
+
   // 喫水線に沿った白い泡。船体が海面を切る線上に出し、上下に動いているほど多くする
   const a = new THREE.Vector3(), b = new THREE.Vector3();
   let wakeDebt = 0;
@@ -167,7 +200,7 @@ export function createFx(scene, sim, shipGroup, max = 40000) {
     for (let n = 0; n < 60; n++) emit(P.SMOKE, p.x + rnd(1), 2 + Math.random() * 3, p.z + rnd(1), rnd(1), 1.5 + Math.random(), rnd(1));
   }
 
-  return { sprite, emit, update, emitOpenings, emitWaterline, explosion, get count() { return count; } };
+  return { sprite, emit, update, emitOpenings, emitAir, burst, emitWaterline, explosion, get count() { return count; } };
 }
 
 // 魚雷（航走中だけ見える）

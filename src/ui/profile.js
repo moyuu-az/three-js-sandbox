@@ -43,7 +43,9 @@ export function createProfile(svg, { onDoor }) {
     const lab = el('text', { class: 'label', x: q.z0 + 0.15, y: -(q.y1 - 0.5), transform: 'scale(1,-1)' }, g);
     lab.textContent = r.name.replace('船室 ', '');
     const pct = el('text', { class: 'pct', x: q.z1 - 0.15, y: -(q.y0 + 0.2), 'text-anchor': 'end', transform: 'scale(1,-1)' }, g);
-    return { i, q, rect, fill, pct };
+    // 閉じ込められた空気の圧力（ゲージ、bar）。大きいときだけ部屋の右上に出す
+    const pres = el('text', { class: 'pres', x: q.z1 - 0.15, y: -(q.y1 - 0.5), 'text-anchor': 'end', transform: 'scale(1,-1)' }, g);
+    return { i, q, rect, fill, pct, pres };
   });
   for (const z of Lo.BULKHEADS) el('line', { class: 'bulk', x1: z, x2: z, y1: H.TANK_TOP, y2: H.deckY(z) }, g);
   el('line', { class: 'bulk', x1: H.Z_MIN, x2: H.Z_MAX, y1: H.TANK_TOP, y2: H.TANK_TOP }, g);
@@ -69,12 +71,15 @@ export function createProfile(svg, { onDoor }) {
   }
   const breachLayer = el('g', {}, g);
 
-  function update({ fills, hot, waterline, doorStates, breaches }) {
+  function update({ fills, hot, waterline, doorStates, breaches, pressures = [] }) {
     for (const r of rooms) {
       const f = Math.max(0, Math.min(1, fills[r.i] ?? 0));
       const hh = (r.q.y1 - r.q.y0) * f;
       r.fill.setAttribute('height', hh.toFixed(3));
       r.pct.textContent = f > 0.005 ? `${Math.round(f * 100)}%` : '';
+      const p = pressures[r.i] ?? 0;
+      r.pres.textContent = Math.abs(p) >= 0.05 ? `${p > 0 ? '+' : '−'}${Math.abs(p).toFixed(2)} bar` : '';
+      r.rect.classList.toggle('pressed', p >= 0.05);
       r.rect.classList.toggle('hot', !!hot[r.i]);
     }
     // 横倒し（横傾斜 90°）付近では船体座標への換算が発散する（±Infinity / NaN を属性に入れると SVG のエラーになる）
