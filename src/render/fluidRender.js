@@ -139,14 +139,17 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
   function render(camera, shipMatrix, { cutSide = 0, sunDir, under = false }) {
     u.underwater.value = under ? 1 : 0;
     for (const a of [anchor, mainAnchor]) { a.matrix.multiplyMatrices(shipMatrix, anchorLocal); a.matrixWorld.copy(a.matrix); }
+    // OrbitControls.update() の直後は matrixWorldInverse が前フレームの向きのまま（sunDirView がずれる）
+    camera.updateMatrixWorld();
     u.projX.value = camera.projectionMatrix.elements[0];
     u.projY.value = camera.projectionMatrix.elements[5];
     partSprite.visible = mode === 'particles';
     u.surfaceOn.value = mode === 'surface' ? 1 : 0;
-    if (mode !== 'surface') return;
+    // 描く個数と断面の向きは粒子表示でも使う（ここより後で更新すると、粒子表示では増えた粒子が描かれず断面でも切れない）
     const n = fluid.drawCount;
     for (const s of [depthSprite, thickSprite, partSprite]) s.count = Math.max(1, n);
     u.cutSide.value = cutSide;
+    if (mode !== 'surface') return;
     u.focal.value = (camera.projectionMatrix.elements[5] * rtDepth.height) / 2;
     u.sunDirView.value.copy(sunDir).transformDirection(camera.matrixWorldInverse);
     const prevRT = renderer.getRenderTarget(), prevAlpha = renderer.getClearAlpha();
