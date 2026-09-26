@@ -13,6 +13,12 @@ export const BOUNDS = {
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 
+// 板（隔壁・甲板・壁）が格子上で実際に置かれる座標。描画の壁をここに合わせないと、水が壁にめり込んで見える
+export function snapPlane(at, axis, h) {
+  const o = gridSpec(h).origin['xyz'.indexOf(axis)];
+  return o + (Math.round((at - o) / h - 0.5) + 0.5) * h;
+}
+
 // 格子の寸法（h ごとに決まる）
 export function gridSpec(h) {
   const dims = ['x', 'y', 'z'].map((a) => Math.ceil((BOUNDS[a][1] - BOUNDS[a][0]) / h));
