@@ -46,8 +46,10 @@ export async function createSim({ waves = [], seabedY = SEABED_Y } = {}) {
 
   const ship = { mass: SHIP_MASS, com: SHIP_COM, inertia: SHIP_INERTIA };
   let water = { mass: 0, com: [0, 0, 0], inertia: [0, 0, 0, 0, 0, 0] };
+  let applied = water; // 剛体に最後に反映した水。閾値の比較はこれと行う（前回の受け取り値と比べると、少しずつ増える浸水が永久に反映されない）
   let total = ship;
   function applyMass() {
+    applied = water;
     total = MP.combine(ship, water);
     const e = MP.eigenSym(total.inertia);
     const q = MP.matToQuat(e.vectors);
@@ -58,10 +60,12 @@ export async function createSim({ waves = [], seabedY = SEABED_Y } = {}) {
   applyMass();
 
   // 船内の水の質量特性（GPU 流体の集計値）。質量が 0.1% 以上、または重心が 2 cm 以上動いたときだけ剛体に反映する
+  // GPU の集計は信頼境界の外。非有限・負の値は捨てて直前の値を保つ（一度 NaN を Rapier に渡すと重心が NaN のまま戻らない）
   function setWater(wm) {
-    const dm = Math.abs(wm.mass - water.mass), dc = Math.hypot(...wm.com.map((c, i) => c - water.com[i]));
+    if (!(wm.mass >= 0) || ![wm.mass, ...wm.com, ...wm.inertia].every(Number.isFinite)) return;
+    const dm = Math.abs(wm.mass - applied.mass), dc = Math.hypot(...wm.com.map((c, i) => c - applied.com[i]));
     water = wm;
-    if (dm > total.mass * 1e-3 || dc > 0.02 || (wm.mass === 0) !== (total.mass === ship.mass)) applyMass();
+    if (dm > total.mass * 1e-3 || dc > 0.02 || (wm.mass === 0) !== (applied.mass === 0)) applyMass();
   }
 
   const cells = Float64Array.from(cells0.flatMap((c) => [c.x, c.y, c.z]));

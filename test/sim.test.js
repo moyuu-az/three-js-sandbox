@@ -106,6 +106,30 @@ test('波: 波の中では上下に揺れ、発散しない', async () => {
   assert.ok(Math.abs(sim.state().rollDeg) < 15);
 });
 
+test('浸水: 1 回ごとの増分が閾値より小さくても、積み重なった水の質量は剛体に反映される', async () => {
+  const sim = await createSim();
+  // 毎フレーム 17 kg（約 1 m³/min。閾値 = 総質量の 0.1% ≈ 400 kg より小さい）ずつ増える遅い浸水
+  for (let i = 1; i <= 600; i++) sim.setWater({ mass: 17 * i, com: [0, 1.5, 7], inertia: [0, 0, 0, 0, 0, 0] });
+  const applied = sim.state().totalMass - SHIP_MASS;
+  assert.ok(Math.abs(applied - 17 * 600) <= SHIP_MASS * 1e-3, `反映された水 ${applied} kg / 受け取った水 ${17 * 600} kg`);
+  assert.ok(Math.abs(sim.body.mass() - sim.state().totalMass) < 1, '重力に使う質量と Rapier の質量が一致');
+});
+
+test('浸水: 非有限の水の質量特性は捨て、後から来た正しい値で回復する', async () => {
+  const sim = await createSim();
+  sim.step();
+  sim.setWater({ mass: 1e5, com: [NaN, 1, 1], inertia: [1, 1, 1, 0, 0, 0] });
+  sim.setWater({ mass: Infinity, com: [0, 1, 1], inertia: [1, 1, 1, 0, 0, 0] });
+  sim.setWater({ mass: 1e5, com: [0, 1, 1], inertia: [1, NaN, 1, 0, 0, 0] });
+  const c = sim.body.localCom();
+  assert.ok([c.x, c.y, c.z].every(Number.isFinite), `重心 ${JSON.stringify(c)}`);
+  sim.setWater({ mass: 1e5, com: [0, 1, 1], inertia: [1, 1, 1, 0, 0, 0] });
+  run(sim, 1);
+  const s = sim.state();
+  assert.ok(Math.abs(s.totalMass - (SHIP_MASS + 1e5)) < 1, `${s.totalMass}`);
+  assert.ok(s.y < -DESIGN_DRAFT - 0.1, `水の重さで沈む y=${s.y}`);
+});
+
 test('流体への見かけの重力: 静止時は船体座標で真下 g、傾くと向きが変わる', async () => {
   const sim = await createSim();
   run(sim, 5);
