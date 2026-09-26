@@ -123,7 +123,7 @@ select { width: 100%; background: rgb(0 0 0 / 0.3); border: 1px solid var(--line
 #profile .door rect { stroke-width: 0.06; }
 #profile .door.open rect { fill: rgb(255 193 94 / 0.3); stroke: var(--warn); }
 #profile .door.closed rect { fill: rgb(126 240 198 / 0.35); stroke: var(--accent-2); }
-#profile .door:hover rect { stroke-width: 0.14; }
+#profile .door:hover rect, #profile .door:focus-visible rect { stroke-width: 0.14; }
 #profile .breach { fill: var(--danger); stroke: #fff; stroke-width: 0.05; }
 
 /* ---------- 通知・モーダル ---------- */

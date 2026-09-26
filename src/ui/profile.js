@@ -55,7 +55,10 @@ export function createProfile(svg, { onDoor }) {
     const gg = el('g', { class: 'door' }, g);
     el('rect', { x: z - 0.28, y: y0, width: 0.56, height: y1 - y0, rx: 0.1 }, gg);
     el('title', {}, gg).textContent = title;
+    // キーボードでも開閉できるように（左パネルと同じ操作をここからもできる）
+    gg.setAttribute('tabindex', '0'); gg.setAttribute('role', 'button'); gg.setAttribute('aria-label', `${title}（開閉）`);
     gg.addEventListener('click', () => onDoor(id));
+    gg.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDoor(id); } });
     doors.set(id, gg);
   };
   for (const d of Lo.DOORS.filter((x) => x.wt)) addDoor(d.id, (d.box.z[0] + d.box.z[1]) / 2, Lo.resolveY(d.box.y[0], 0), Lo.resolveY(d.box.y[1], 0), d.name);
@@ -74,8 +77,11 @@ export function createProfile(svg, { onDoor }) {
       r.pct.textContent = f > 0.005 ? `${Math.round(f * 100)}%` : '';
       r.rect.classList.toggle('hot', !!hot[r.i]);
     }
-    if (waterline) { wl.setAttribute('y1', waterline[0]); wl.setAttribute('y2', waterline[1]); }
-    for (const [id, gg] of doors) { const open = doorStates[id]; gg.classList.toggle('open', open); gg.classList.toggle('closed', !open); }
+    // 横倒し（横傾斜 90°）付近では船体座標への換算が発散する（±Infinity / NaN を属性に入れると SVG のエラーになる）
+    const wlOk = waterline && waterline.every(Number.isFinite);
+    wl.style.display = wlOk ? '' : 'none';
+    if (wlOk) { wl.setAttribute('y1', waterline[0]); wl.setAttribute('y2', waterline[1]); }
+    for (const [id, gg] of doors) { const open = !!doorStates[id]; gg.classList.toggle('open', open); gg.classList.toggle('closed', !open); }
     if (breachLayer.childElementCount !== breaches.length) {
       breachLayer.replaceChildren();
       for (const b of breaches) el('ellipse', { class: 'breach', cx: b.center[2], cy: b.center[1], rx: b.half[0], ry: b.half[1] }, breachLayer);
