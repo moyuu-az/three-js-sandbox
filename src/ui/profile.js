@@ -12,7 +12,7 @@ const el = (tag, attrs = {}, parent = null) => {
 };
 
 // 側面図の中での部屋の矩形。上段（第 2 甲板より上の居住区）は左舷・通路・右舷の 3 段に分けて描く
-function roomRect(r) {
+export function roomRect(r) {
   const b = r.box;
   const zc = (Math.max(b.z[0], H.Z_MIN) + Math.min(b.z[1], H.Z_MAX)) / 2;
   const z0 = Math.max(b.z[0], H.Z_MIN + 0.3), z1 = Math.min(b.z[1], H.Z_MAX - 0.6);
@@ -23,6 +23,15 @@ function roomRect(r) {
     y0 = y0 + lane * hgt; y1 = y0 + hgt;
   }
   return { z0, z1, y0, y1 };
+}
+
+// 部屋の中の文字の行（船体座標 m、文字の基線）: 名前は上端から 0.5 下、浸水率は下端から 0.2 上。
+// 空気圧は名前の下の行に出す（名前と同じ行の右端だと、幅の狭い部屋では名前に、低い部屋では浸水率に重なる）。
+// 3 行が入らない低い部屋（上段の居住区の 3 段、高さ 0.67 m）は null: 文字は出さず、部屋の色とツールチップで示す
+export const PRES_ROW = 1.0; // 空気圧の行: 上端から
+export const PRES_MIN_H = 1.8; // これより低い部屋には空気圧の行を置かない（名前・空気圧・浸水率の 3 行が入る高さ + 余裕）
+export function pressureSlot(q) {
+  return q.y1 - q.y0 >= PRES_MIN_H ? { x: q.z0 + 0.15, y: q.y1 - PRES_ROW } : null;
 }
 
 export function createProfile(svg, { onDoor }) {
@@ -43,9 +52,10 @@ export function createProfile(svg, { onDoor }) {
     const lab = el('text', { class: 'label', x: q.z0 + 0.15, y: -(q.y1 - 0.5), transform: 'scale(1,-1)' }, g);
     lab.textContent = r.name.replace('船室 ', '');
     const pct = el('text', { class: 'pct', x: q.z1 - 0.15, y: -(q.y0 + 0.2), 'text-anchor': 'end', transform: 'scale(1,-1)' }, g);
-    // 閉じ込められた空気の圧力（ゲージ、bar）。大きいときだけ部屋の右上に出す
-    const pres = el('text', { class: 'pres', x: q.z1 - 0.15, y: -(q.y1 - 0.5), 'text-anchor': 'end', transform: 'scale(1,-1)' }, g);
-    return { i, q, rect, fill, pct, pres };
+    // 閉じ込められた空気の圧力（ゲージ、bar）。大きいときだけ名前の下に出す（行が無い部屋はツールチップだけ）
+    const slot = pressureSlot(q);
+    const pres = slot && el('text', { class: 'pres', x: slot.x, y: -slot.y, transform: 'scale(1,-1)' }, g);
+    return { i, q, rect, fill, pct, pres, title, name: r.name };
   });
   for (const z of Lo.BULKHEADS) el('line', { class: 'bulk', x1: z, x2: z, y1: H.TANK_TOP, y2: H.deckY(z) }, g);
   el('line', { class: 'bulk', x1: H.Z_MIN, x2: H.Z_MAX, y1: H.TANK_TOP, y2: H.TANK_TOP }, g);
@@ -78,7 +88,10 @@ export function createProfile(svg, { onDoor }) {
       r.fill.setAttribute('height', hh.toFixed(3));
       r.pct.textContent = f > 0.005 ? `${Math.round(f * 100)}%` : '';
       const p = pressures[r.i] ?? 0;
-      r.pres.textContent = Math.abs(p) >= 0.05 ? `${p > 0 ? '+' : '−'}${Math.abs(p).toFixed(2)} bar` : '';
+      const pt = Math.abs(p) >= 0.05 ? `${p > 0 ? '+' : '−'}${Math.abs(p).toFixed(2)} bar` : '';
+      if (r.pres) r.pres.textContent = pt;
+      const tip = pt ? `${r.name}（空気 ${pt}）` : r.name;
+      if (r.title.textContent !== tip) r.title.textContent = tip;
       r.rect.classList.toggle('pressed', p >= 0.05);
       r.rect.classList.toggle('hot', !!hot[r.i]);
     }

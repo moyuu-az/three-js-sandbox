@@ -28,6 +28,10 @@ test('WASD: 斜め移動も同じ速さ、Shift で 3 倍、距離に比例し�
   near(flyDelta(keys('KeyW'), LOOK_NZ, 10, 1, { fast: true }), [0, 0, -27]);
   near(flyDelta(keys('KeyW'), LOOK_NZ, 0.1, 1), [0, 0, -3], 1e-9); // 近すぎても 3 m/s
   near(flyDelta(keys('KeyW'), LOOK_NZ, 1000, 1), [0, 0, -60], 1e-9); // 遠くても 60 m/s
+  // 水平と上下を同時に押しても、Shift でも、合計の速さは同じ（成分は等分）
+  const e = flyDelta(keys('KeyW', 'KeyD', 'KeyE'), LOOK_NZ, 10, 0.5, { fast: true });
+  assert.ok(Math.abs(Math.hypot(...e) - 27 * 0.5) < 1e-9);
+  near(e.map(Math.abs), new Array(3).fill((27 * 0.5) / Math.sqrt(3)));
 });
 
 test('WASD: 逆向きのキーは打ち消し、関係ないキー・dt ≤ 0 は動かない', () => {

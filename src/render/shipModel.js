@@ -31,23 +31,26 @@ function mat({ map = null, tint = '#ffffff', back = '#5d6368', roughness = 0.7, 
 // （Sims の「壁を下げる」表示や、技術図解の ghosted view と同じ考え方）。
 // 判定は「その面の船外向きの向き · (カメラ − 点) > 0」。外板は幾何の法線、厚みのある壁（両面が別の面）や上甲板（上下 2 枚）は
 // 面ごとに決まった船外向きを使う（幾何の法線だと裏の面がカメラを向かず、残って視界を塞ぐ）
-const xrayView = { on: uniform(0), camLocal: uniform(new THREE.Vector3()) };
-const ghostHere = (outward) => xrayView.on.greaterThan(0.5).and(dot(outward ? vec3(...outward) : normalLocal, xrayView.camLocal.sub(positionLocal)).greaterThan(0));
+// xv: その船の透視の状態 { on, camLocal }（buildShipModel ごとに作る。モジュールで共有すると、2 隻目の setXray が 1 隻目も切り替える）
+const ghostHere = (xv, outward) => xv.on.greaterThan(0.5).and(dot(outward ? vec3(...outward) : normalLocal, xv.camLocal.sub(positionLocal)).greaterThan(0));
 // 材質に「透かす面では描かない」を足す（元の色の計算は保つ）
-function ghostify(m, outward = null) {
+function ghostify(m, xv, outward = null) {
   const base = m.colorNode ?? color(m.color);
-  m.colorNode = Fn(() => { Discard(ghostHere(outward)); return base; })();
+  m.colorNode = Fn(() => { Discard(ghostHere(xv, outward)); return base; })();
   return m;
 }
 // 透かした面に重ねるガラス: 縁で明るいフレネルと、肋骨（0.6 m）・水線（0.5 m）または甲板の継ぎ目の細い線。加算で重ねる
-function ghostGlass(outward = null) {
+function ghostGlass(xv, outward = null) {
   const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
   const line = (v, step, w) => float(1).sub(smoothstep(w * 0.4, w, abs(fract(v.div(step).add(0.5)).sub(0.5)).mul(step)));
   m.colorNode = Fn(() => {
-    Discard(ghostHere(outward).not());
+    Discard(ghostHere(xv, outward).not());
     const p = positionLocal;
     const flat = outward && outward[1] > 0.5; // 上甲板・屋根: 前後と左右の継ぎ目
-    const lines = flat ? max(line(p.z, 1.2, 0.03), line(p.x, 1.0, 0.03).mul(0.6)) : max(line(p.z, 0.6, 0.03), line(p.y, 0.5, 0.025).mul(0.55));
+    // 縦の線は z に並べる（肋骨）。z を向いた面（トランサム・甲板室の前後の壁と窓）は z が一定なので x に並べる
+    // （z のままだと、肋骨の位置と同じ z にあるトランサムは面全体が線の上になり、一様に明るく光る）。外板の |n.z| は最大 0.77
+    const across = outward ? (Math.abs(outward[2]) > 0.5 ? p.x : p.z) : select(abs(normalLocal.z).greaterThan(0.9), p.x, p.z);
+    const lines = flat ? max(line(p.z, 1.2, 0.03), line(p.x, 1.0, 0.03).mul(0.6)) : max(line(across, 0.6, 0.03), line(p.y, 0.5, 0.025).mul(0.55));
     const fres = pow(float(1).sub(abs(dot(normalView, normalize(positionView)))), 3);
     const a = clamp(float(0.025).add(fres.mul(0.3)).add(lines.mul(0.2)), 0, 1);
     return vec4(vec3(0.5, 0.82, 1.0), a);
@@ -124,19 +127,20 @@ export function buildShipModel({ h, draft }) {
     rope: new THREE.LineBasicNodeMaterial({ color: 0x1b1b1b }),
   };
   // 透視表示で透かす外殻。甲板室の壁・屋根は向きごとに材質を分ける（厚みのある板は両面とも同じ船外向きで判定する）
+  const xv = { on: uniform(0), camLocal: uniform(new THREE.Vector3()) };
   const whiteTex = M.white.colorNode;
   const houseMat = () => { const m = mat({ roughness: 0.55, metalness: 0.1, back: '#b8b8b2' }); m.colorNode = whiteTex; return m; };
   const OUT = { px: [1, 0, 0], nx: [-1, 0, 0], pz: [0, 0, 1], nz: [0, 0, -1], up: [0, 1, 0] };
   const ghostOf = new Map([[M.hull, null], [M.stern, null], [M.deck, OUT.up]]); // 材質 → 船外向き（null = 幾何の法線）
-  for (const [m, o] of ghostOf) ghostify(m, o);
+  for (const [m, o] of ghostOf) ghostify(m, xv, o);
   const house = {};
-  for (const k of ['px', 'nx', 'pz', 'nz', 'up']) { house[k] = ghostify(houseMat(), OUT[k]); ghostOf.set(house[k], OUT[k]); }
+  for (const k of ['px', 'nx', 'pz', 'nz', 'up']) { house[k] = ghostify(houseMat(), xv, OUT[k]); ghostOf.set(house[k], OUT[k]); }
   // 肋骨（外板の内側の帯）も外板と一緒に透かす（残すと手前に柵のように並んで船内を隠す。線はガラスの側に描く）
   const primerTex = M.primer.colorNode;
   const frameMat = {};
   // 上甲板の下の梁（up）も上甲板と一緒に透かす
-  for (const k of ['px', 'nx', 'up']) { frameMat[k] = mat({ roughness: 0.75, metalness: 0.2, back: '#6a6f72' }); frameMat[k].colorNode = primerTex; ghostify(frameMat[k], OUT[k]); }
-  house.glass = ghostify(new THREE.MeshPhysicalNodeMaterial({ color: 0x0d1b26, roughness: 0.05, metalness: 0.2, clearcoat: 1, side: THREE.DoubleSide }));
+  for (const k of ['px', 'nx', 'up']) { frameMat[k] = mat({ roughness: 0.75, metalness: 0.2, back: '#6a6f72' }); frameMat[k].colorNode = primerTex; ghostify(frameMat[k], xv, OUT[k]); }
+  house.glass = ghostify(new THREE.MeshPhysicalNodeMaterial({ color: 0x0d1b26, roughness: 0.05, metalness: 0.2, clearcoat: 1, side: THREE.DoubleSide }), xv);
   ghostOf.set(house.glass, null);
 
   // ---------- 船体外板 ----------
@@ -569,7 +573,7 @@ export function buildShipModel({ h, draft }) {
   const glassMats = new Map();
   const glass = shell.filter((m) => ghostOf.has(m.material)).map((m) => {
     const o = ghostOf.get(m.material), key = String(o);
-    if (!glassMats.has(key)) glassMats.set(key, ghostGlass(o));
+    if (!glassMats.has(key)) glassMats.set(key, ghostGlass(xv, o));
     const g = new THREE.Mesh(m.geometry, glassMats.get(key));
     g.renderOrder = 6;
     g.visible = false;
@@ -577,12 +581,12 @@ export function buildShipModel({ h, draft }) {
     return g;
   });
   function setXray(on) {
-    xrayView.on.value = on ? 1 : 0;
+    xv.on.value = on ? 1 : 0;
     for (const m of shell) m.castShadow = !on;
     for (const g of glass) g.visible = on;
   }
   // 船体座標のカメラ位置（透かす面の判定に使う。毎フレーム）
-  const setViewer = (camLocal) => xrayView.camLocal.value.copy(camLocal);
+  const setViewer = (camLocal) => xv.camLocal.value.copy(camLocal);
 
   // ---------- 破口デカール ----------
   const breachMat = new THREE.MeshStandardNodeMaterial({ map: TX.breachTexture(), transparent: true, depthWrite: false, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -4, side: THREE.DoubleSide });
