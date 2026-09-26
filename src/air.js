@@ -41,6 +41,9 @@ export function roomLinks(grid, nRooms) {
   return [...map].map(([key, pts]) => ({ a: Math.floor(key / 64), b: key % 64, pts: Float32Array.from(pts) }));
 }
 
+// 外板の点の種類（強度の区分）。甲板室の部屋は甲板室の壁、上向きの面は上甲板、それ以外は外板。n: 船外向きの面の向き
+export const surfaceKind = (room, n) => (Lo.ROOMS[room]?.comp === 'DH' ? 'house' : n[1] > 0.5 ? 'deck' : 'hull');
+
 const STRIDE = 7; // x, y, z, nx, ny, nz, 強度 [Pa]
 /**
  * 外板の点（船外と接する、水が入れる格子点の面）と、その点の強度。
@@ -85,8 +88,7 @@ export function strengthOf(closed, scale = 1) {
         return { strength: S.closure * scale * jitter, closure: o.id };
       }
     }
-    const kind = Lo.ROOMS[r]?.comp === 'DH' ? 'house' : d[1] > 0.5 ? 'deck' : 'hull';
-    return { strength: S[kind] * scale * jitter, closure: null };
+    return { strength: S[surfaceKind(r, d)] * scale * jitter, closure: null };
   };
 }
 

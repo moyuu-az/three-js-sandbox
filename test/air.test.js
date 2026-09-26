@@ -224,3 +224,32 @@ test('外板の荷重: 深く沈んだ密閉の空の部屋は内向き、閉じ
   // 満水の部屋（水位 +∞）は除く。水頭が無限大になって必ず「破れる」判定にならないこと
   assert.equal(A.worstLoad(env, { m: m(-10), seaY: () => 0, up, levels: [Infinity], gauge: [0] }), null);
 });
+
+// ---------- 境界値 ----------
+test('出入り: dt = 0（一時停止）では空気量は変わらない', () => {
+  const air = A.createAir([100]);
+  air.amount[0] = 150;
+  const v = A.airVolumes([100], [0], [-Infinity]);
+  A.equalize(air, [0], v);
+  const before = air.amount[0];
+  A.exchange(air, [0], v, [vent(0, 1, 0)], 0);
+  assert.equal(air.amount[0], before);
+});
+
+test('出入り: 満水の部屋の開口は空気を通さず、NaN にならない', () => {
+  const air = A.createAir([10, 10]);
+  const v = A.airVolumes([10, 10], [10, 0], [Infinity, -Infinity]);
+  A.equalize(air, [0, 1], v);
+  const f = A.exchange(air, [0, 1], v, [vent(0, 1, 0)], 0.5);
+  assert.deepEqual(f, [0]);
+  A.equalize(air, [0, 1], v);
+  assert.ok([...air.amount, ...air.pressure].every(Number.isFinite));
+});
+
+test('外板の種類: 甲板室の部屋は甲板室の壁、上向きの面は上甲板、それ以外は外板（破断の通知と強度で同じ判定）', () => {
+  const house = Lo.ROOMS.findIndex((r) => r.comp === 'DH');
+  assert.equal(A.surfaceKind(house, [0, 1, 0]), 'house');
+  assert.equal(A.surfaceKind(R('第1船倉'), [0, 1, 0]), 'deck');
+  assert.equal(A.surfaceKind(R('第1船倉'), [1, 0, 0]), 'hull');
+  assert.equal(A.surfaceKind(R('第1船倉'), [0, -1, 0]), 'hull');
+});

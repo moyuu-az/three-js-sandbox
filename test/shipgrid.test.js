@@ -184,3 +184,22 @@ test('破断: 甲板室の壁の穴は格子の向きのまま（船体の曲面
   const b = ruptureAt([Lo.HOUSE.hw, H.deckY(-10) + 1.5, -10], [1, 0, 0], 0.8);
   assert.deepEqual(b.normal, [1, 0, 0]);
 });
+
+// ---------- 開口の数の上限 ----------
+test('上限: 開口が MAX_OPENINGS を超えたら、入らなかった片の数を dropped で知らせる（破断を開ける前に確かめるため）', () => {
+  // 既定で開いている甲板の開口 8 つ + シナリオの破口 5 つ（複数の部屋にまたがるものがある）で 16 を超える
+  const sc = [[-1, 1.8, 7.8, 1.6, 1.2], [1, 1.8, Lo.BULKHEADS[2], 2.4, 1.4], [-1, 2.7, -0.3, 3.2, 2.6], [1, 1.6, -8.5, 1.8, 1.3], [-1, 2.4, 11.2, 3.4, 1.8]];
+  const breaches = sc.map(([s, y, z, w, hh]) => breachAt(s * H.halfBreadth(z, y), y, z, w, hh));
+  const full = buildShipGrid(h, { breaches });
+  assert.equal(full.openings.length, V.MAX_OPENINGS);
+  assert.ok(full.dropped > 0, `${full.dropped}`);
+  // 入りきらない片は格子にも開口として残らない（開口の番号は 0..15 だけ）
+  for (let n = 0; n < full.grid.N; n++) {
+    const t = full.grid.type[n];
+    if (t >= V.NODE_OPENING_IN) assert.ok((t - V.NODE_OPENING_IN) % 32 < V.MAX_OPENINGS);
+  }
+  // 収まっていれば 0
+  const fits = buildShipGrid(h, { breaches: breaches.slice(0, 1) });
+  assert.equal(fits.dropped, 0);
+  assert.equal(buildShipGrid(h, allClosed).dropped, 0);
+});

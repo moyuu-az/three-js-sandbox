@@ -200,7 +200,8 @@ if (window.ONLY1) { window.done = true; throw new Error('only1'); }
   const nodes = F.roomNodes(b.grid, Lo.ROOMS.length);
   const H0 = +(Q0.get('airh') ?? 0.6);
   let nInit = 0;
-  // 水位はアプリと同じく、部屋の粒子数（圧縮なしの体積）から求める
+  // 水位は部屋の粒子数（圧縮なしの体積）から求める。アプリは圧縮を割り戻した体積（stats.roomVolume）を使うが、ここでは
+  // 段差なし（head = 0）の水位差を引いて比べるので、縮みの分の偏りは打ち消される
   const levelDiff = async (head) => {
     const heads = new Array(V.MAX_ROOMS).fill(0);
     heads[sg] = head;

@@ -78,3 +78,23 @@ export function particlesFor(q, dt, particleVolume, carry = 0) {
   const n = Math.max(0, Math.floor(x + 1e-9)); // 浮動小数の積み残しで 1 個足りなくならないように
   return { count: n, carry: x - n };
 }
+
+// 浸水・満水の通知のしきい値 [浸水率]。on を超えたら 1 回知らせ、off を割るまで知らせ直さない
+// （水位の見積もりはしきい値の前後で揺れるので、上下同じしきい値だと同じ通知が何度も出た）
+const FILL_ALERTS = [['wet', 0.02, 0.01], ['full', 0.95, 0.85]];
+/**
+ * 部屋ごとの浸水率 fills から、新しく出す通知を求める。notified: 前回の戻り値の notified（最初は省略）。
+ * 戻り値: { notified（次に渡す状態）, events: [{ room, kind: 'wet' | 'full' }] }
+ */
+export function fillAlerts(fills, notified = []) {
+  const next = [], events = [];
+  fills.forEach((f, room) => {
+    const was = notified[room] ?? {}, now = {};
+    for (const [kind, on, off] of FILL_ALERTS) {
+      now[kind] = was[kind] ? f >= off : f >= on;
+      if (now[kind] && !was[kind]) events.push({ room, kind });
+    }
+    next.push(now);
+  });
+  return { notified: next, events };
+}

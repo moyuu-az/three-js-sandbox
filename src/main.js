@@ -235,31 +235,44 @@ async function main() {
 
   // ---------- 空気圧・水圧による破断 ----------
   const KIND_NAME = { hull: '外板', deck: '上甲板', house: '甲板室の壁' };
+  // 開口は格子に MAX_OPENINGS 個まで。入りきらない穴は開けない（戻り値 false）: 格子に入らない穴を「破れた」ことにすると
+  // 圧力が抜けずに同じ場所で破断を繰り返し、閉じた開口を開けると（破口より先に格子に入るので）魚雷の破口が黙って格子から消える
   function rupture(w) {
+    if (built.openings.length >= MAX_OPENINGS) return false;
     const pt = A.envelopePoint(env, w.i);
     const outward = w.dp > 0, bar = Math.abs(w.dp) / 1e5;
     const room = Lo.ROOMS[pt.room];
+    const droppedBefore = built.dropped;
+    let b = null;
+    if (pt.closure) gridState.seaOpenings[pt.closure] = true; // 閉じた開口の蓋・扉は締め付け金具が外れて開く
+    else {
+      b = ruptureAt(pt.p, pt.n, 0.8, { kind: 'rupture', name: `${outward ? '破裂' : '圧潰'}（${room.name}）` });
+      gridState.breaches.push(b);
+    }
+    rebuild();
+    if (built.dropped > droppedBefore) {
+      // 部屋をまたいで片が増え、入りきらなかった: 元に戻す（格子の作り直しが 2 回になるので、しばらく試し直さない）
+      if (b) gridState.breaches.pop(); else gridState.seaOpenings[pt.closure] = false;
+      rebuild();
+      ruptureReadyAt = simTime + 1.5;
+      return false;
+    }
     let where;
-    if (pt.closure) {
-      // 閉じた開口の蓋・扉は締め付け金具が外れて開く
-      gridState.seaOpenings[pt.closure] = true;
+    if (b) {
+      model.addBreachDecal(b.center, b.normal, 0.8, 0.8);
+      where = `${room.name}の${KIND_NAME[A.surfaceKind(pt.room, pt.n)]}`;
+    } else {
       model.doors.get(pt.closure)?.set(true);
       renderToggles();
       where = Lo.SEA_OPENINGS.find((o) => o.id === pt.closure).name;
-    } else {
-      const kind = room.comp === 'DH' ? 'house' : pt.n[1] > 0.5 ? 'deck' : 'hull';
-      const b = ruptureAt(pt.p, pt.n, 0.8, { kind: 'rupture', name: `${outward ? '破裂' : '圧潰'}（${room.name}）` });
-      gridState.breaches.push(b);
-      model.addBreachDecal(b.center, b.normal, 0.8, 0.8);
-      where = `${room.name}の${KIND_NAME[kind]}`;
     }
-    rebuild();
     ruptures++;
     ruptureReadyAt = simTime + 1.5; // 同じ圧力で続けて破れないよう、開いた穴で圧力が抜けるのを待つ
     const wp = new THREE.Vector3(...pt.p).applyMatrix4(model.group.matrixWorld);
     const nW = new THREE.Vector3(...pt.n).applyQuaternion(model.group.quaternion);
     fx.burst(wp, nW, { outward, submerged: wp.y < sim.sea(wp.x, wp.z), size: Math.min(3, 0.6 + bar * 2) });
     toast(`${where}が${outward ? '中の空気圧で破裂' : '外の水圧で圧潰'}（内外の圧力差 ${bar.toFixed(2)} bar）`, 'danger');
+    return true;
   }
 
   // 船体クリックで狙う（ドラッグでの視点操作とは区別する）
@@ -393,7 +406,7 @@ async function main() {
   // ---------- ループの状態 ----------
   const clock = new THREE.Timer();
   let acc = 0, simTime = 0, uiTimer = 0, smokeDebt = 0, flows = [], lastInflow = 0;
-  let frameSec = 1 / 60, lastStatus = '', fillPrev = new Array(Lo.ROOMS.length).fill(0), deckWet = false, grounded = false;
+  let frameSec = 1 / 60, lastStatus = '', fillNotified = [], deckWet = false, grounded = false;
   const up = [0, 1, 0], upV = new THREE.Vector3();
   const levels = new Array(Lo.ROOMS.length).fill(-Infinity);
   const gauge = new Array(NR).fill(0), heads = new Array(NR).fill(0); // 部屋の空気のゲージ圧 [Pa] と水頭 [m]
@@ -630,11 +643,9 @@ async function main() {
     deckWet = wet;
 
     const fills = roomVol.map((v, i) => v / built.capacity[i]);
-    fills.forEach((f, i) => {
-      if (fillPrev[i] < 0.02 && f >= 0.02) toast(`${Lo.ROOMS[i].name} に浸水`, 'warn');
-      if (fillPrev[i] < 0.95 && f >= 0.95) toast(`${Lo.ROOMS[i].name} が満水`, 'danger');
-    });
-    fillPrev = fills;
+    const alerts = F.fillAlerts(fills, fillNotified);
+    fillNotified = alerts.notified;
+    for (const e of alerts.events) toast(`${Lo.ROOMS[e.room].name} ${e.kind === 'full' ? 'が満水' : 'に浸水'}`, e.kind === 'full' ? 'danger' : 'warn');
     updateLabelText(fills);
     // 側面図の喫水線（船首・船尾の位置で、海面の高さを船体座標の y に直す）
     q.copy(model.group.quaternion);

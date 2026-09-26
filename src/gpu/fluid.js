@@ -344,7 +344,8 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
         r.assign(roomOf.element(int(y.x).add(int(y.y).mul(strideY)).add(int(y.z).mul(strideZ))));
       });
       atomicAdd(hist.element(r), 1);
-      atomicAdd(hist.element(r.add(MAX_ROOMS)), int(float(VOLFIX).div(max(vel.element(instanceIndex).w, 1))));
+      // 四捨五入（切り捨てだと圧縮された粒子ごとに平均 0.5 / 256 ずつ少なく数え、満水の部屋に 0.2% の偽のエアポケットが残る）
+      atomicAdd(hist.element(r.add(MAX_ROOMS)), int(float(VOLFIX).div(max(vel.element(instanceIndex).w, 1)).add(0.5)));
     });
     workgroupBarrier();
     If(l.lessThan(MAX_ROOMS * 2), () => { atomicAdd(roomAcc.element(l), atomicLoad(hist.element(l))); });

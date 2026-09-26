@@ -99,6 +99,7 @@ export function buildShipGrid(h, state = {}) {
 
   // 船外への開口: 開口面の前後 2 格子の範囲を、船内側 = OPENING_IN、船外側 = OPENING_OUT にする
   const openings = [];
+  let dropped = 0; // MAX_OPENINGS を超えて格子に入らなかった開口の片（部屋ごと）の数。呼び出し側が「開けたつもりの穴が無い」を知るため
   const carve = (o, meta) => {
     // 軸が単位ベクトルでない開口（船体の外の点で作った破口は法線が 0 になる）を通すと、範囲判定が全格子点で真になり船全体が開口になる
     if (![o.normal, o.u, o.v].every((a) => Math.abs(Math.hypot(...a) - 1) < 1e-3) || !(o.half[0] > 0 && o.half[1] > 0)) return;
@@ -120,7 +121,7 @@ export function buildShipGrid(h, state = {}) {
     if (total === 0) return;
     const pieces = [...inner.entries()].sort((p, q) => q[1].length - p[1].length);
     for (const [r, ns] of pieces) {
-      if (openings.length >= V.MAX_OPENINGS) break;
+      if (openings.length >= V.MAX_OPENINGS) { dropped++; continue; }
       const k = openings.length;
       for (const n of ns) type[n] = V.NODE_OPENING_IN + k;
       // 船外側の格子点は一番大きい部屋の開口に付ける（粒子を消すだけなので番号はどれでもよい）
@@ -149,7 +150,7 @@ export function buildShipGrid(h, state = {}) {
     const t = type[n];
     if ((t === V.NODE_FLUID || (t >= V.NODE_OPENING_IN && t < V.NODE_OPENING_OUT)) && room[n] < Lo.ROOMS.length) capacity[room[n]] += h ** 3;
   }
-  return { grid, openings, capacity };
+  return { grid, openings, capacity, dropped };
 }
 
 // 法線 n の面に張る単位ベクトル u, v。u: 法線と上向きの外積（前後方向）、v: 法線と u の外積（おおむね上下）。
