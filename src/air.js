@@ -12,6 +12,7 @@ const CD_AIR = 0.62;
 const V_SONIC = 330; // 開口部を抜ける空気の速さの上限（チョーク）[m/s]
 const P_MAX = 12; // 数値の上限 [atm]（水がほぼ満ちた部屋で体積 → 0 のとき）
 const V_MIN = 0.02; // 空気の体積の下限 [m³]
+const SMALL_GAP = 0.5; // これより小さい空気のすき間 [m³] は負圧にしない（equalize）
 export const headOf = (gaugePa) => gaugePa / (RHO_W * G); // ゲージ圧 → 水頭 [m]
 
 const wet = (t) => t === V.NODE_FLUID || (t >= V.NODE_OPENING_IN && t < V.NODE_OPENING_OUT);
@@ -134,9 +135,11 @@ export function equalize(air, groupOf, vAir, pMax = P_MAX) {
   for (let i = 0; i < n; i++) {
     if (vAir[i] === null) { air.pressure[i] = 1; continue; }
     const g = groupOf[i];
-    // 空気をまったく持たないまとまり（満水で空気を失った部屋の水位が見積もりの揺れで少し下がった）は真空にせず、1 気圧の
-    // すき間として扱う（本当に密閉した部屋から水が抜けて真空になる経路は、このモデルには無い。真空にすると偽の圧潰が起きる）
-    const p = sumA[g] <= 1e-9 ? 1 : Math.min(P_MAX, pMax, Math.max(0.05, sumA[g] / sumV[g]));
+    // 空気が小さなすき間（SMALL_GAP 未満）しか無いまとまりは 1 気圧より下げない。満水近くの部屋の空気の体積は水位の見積もりの
+    // 揺れ（~0.05 m³）と同じ桁で、ボイルの法則に通すと揺れだけで −0.5〜−0.95 bar の吸い込みになり、閉じた開口が偽の圧潰を起こす。
+    // 空気をまったく持たない（満水で失った）すき間も 1 気圧のすき間として扱う
+    const raw = sumA[g] / sumV[g];
+    const p = sumA[g] <= 1e-9 ? 1 : Math.min(P_MAX, pMax, Math.max(sumV[g] < SMALL_GAP ? 1 : 0.05, raw));
     air.pressure[i] = p;
     air.amount[i] = p * vAir[i];
   }

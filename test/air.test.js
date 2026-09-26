@@ -94,6 +94,18 @@ test('ボイル: 満水で空気を失った部屋の水位が見積もりの揺
   assert.ok(air.amount[0] > 0);
 });
 
+test('ボイル: 満水の手前で空気がほとんど抜けた部屋（空気 0.026 m³）の水位が揺れて 0.05 m³ 空いても、負圧にしない', () => {
+  const air = A.createAir([10]);
+  air.amount[0] = 0.026;
+  A.equalize(air, [0], A.airVolumes([10], [9.95], [4.9]));
+  near(air.pressure[0], 1, 1e-12, '小さなすき間は 1 気圧より下げない（揺れで吸い込みを作らない）');
+  // 大きな空気の塊が膨らんだ（水が抜けた）ときは 1 気圧より下がりうる
+  const big = A.createAir([10]);
+  big.amount[0] = 4;
+  A.equalize(big, [0], A.airVolumes([10], [5], [2.5]));
+  near(big.pressure[0], 0.8, 1e-12);
+});
+
 test('ボイル: 水で空気の体積が 0 に近づいても圧力は上限で止まり、NaN にならない', () => {
   const air = A.createAir([10]);
   A.equalize(air, [0], A.airVolumes([10], [10 - 1e-9], [5]));
