@@ -26,7 +26,8 @@ export function waterLevel(nodes, h, volume, up, scratch = new Float32Array(node
   if (volume <= 1e-9 || n === 0) return -Infinity;
   const filled = volume / h ** 3;
   if (filled >= n - 1e-6) return Infinity;
-  const hts = scratch.subarray(0, n);
+  // 扉を開けて作り直すと部屋の格子点が増え、呼び出し側の scratch が足りなくなる。短いまま使うと範囲外が undefined → NaN で水位が壊れる
+  const hts = scratch.length >= n ? scratch.subarray(0, n) : new Float32Array(n);
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < n; i++) {
     const v = up[0] * nodes[3 * i] + up[1] * nodes[3 * i + 1] + up[2] * nodes[3 * i + 2];

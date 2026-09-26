@@ -29,6 +29,13 @@ test('水位: 傾いた重力では、その向きに低い側から詰まる', 
   assert.ok(Math.abs(lv - (0.5 * s + 0.5 * s)) < 0.05, `${lv}`);
 });
 
+test('水位: 作業領域（scratch）が格子点数より短くても結果は同じ（扉を開けて部屋の格子点が増えた後）', () => {
+  const c = cube();
+  const ref = F.waterLevel(c, 0.1, 0.5, up);
+  assert.equal(F.waterLevel(c, 0.1, 0.5, up, new Float32Array(990)), ref);
+  assert.equal(F.waterLevel(c, 0.1, 0.5, up, new Float32Array(0)), ref);
+});
+
 const ctx = (over = {}) => ({ toWorld: (p) => p, sea: () => 0, up, level: -Infinity, ...over });
 const hole = (y, area = 1) => ({ area, samples: [[0, y, 0]] });
 
