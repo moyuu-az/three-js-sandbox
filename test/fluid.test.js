@@ -89,6 +89,15 @@ test('流体: 読み戻しは積み上がらない（返事が来るまで次を
   assert.equal(r.reads.length, 3);
 });
 
+test('流体: カウンタの補正（fixCounters）は 1 スレッドだけで動かす（生成数ぶん起動しない）', () => {
+  const r = fakeRenderer(), f = make(r);
+  f.init(pts(10));
+  f.step(0.004, 1, [{ opening: 0, count: 5000 }]);
+  const one = r.calls.flatMap((c) => c.nodes.map((n) => ({ n, count: c.count }))).filter(({ n }) => n.workgroupSize.every((s) => s === 1));
+  assert.equal(one.length, 1);
+  assert.equal(invocations(one[0].n, one[0].count), 1);
+});
+
 test('流体: 粒子カーネルは確保した粒子数を超えるスレッドを起動しない（maxParticles は 256 の倍数）', async () => {
   const r = fakeRenderer(), f = make(r, 512);
   assert.throws(() => make(fakeRenderer(), 500));

@@ -365,7 +365,9 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     if (total > 0) {
       u.spawnTotal.value = total;
       u.seed.value = (frame * 7919) % 100000;
-      renderer.compute([spawn, fixCounters], total);
+      // 配列でまとめて渡すと個数 total が fixCounters にも使われ、1 スレッドのワークグループを total 個起動してしまう
+      renderer.compute(spawn, total);
+      renderer.compute(fixCounters);
       hwUpper = Math.min(P, hwUpper + total);
       spawnIssued += total;
     }
