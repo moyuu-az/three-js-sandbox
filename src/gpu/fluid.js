@@ -14,7 +14,7 @@ import {
 import { NODE_SOLID, NODE_EXTERIOR, NODE_OPENING_IN, NODE_OPENING_OUT, MAX_OPENINGS, MAX_ROOMS, NO_ROOM } from '../voxel.js';
 
 const FIX = 65536; // アトミック加算用の固定小数点の倍率（WebGPU の atomic は整数のみ）
-const VOLFIX = 256; // 部屋ごとの実際の体積の固定小数点の倍率（粒子 1 個の静止体積 = 256。40 万個 × 256 / 0.5 でも int32 に収まる）
+const VOLFIX = 256; // 部屋ごとの実際の体積の固定小数点の倍率（粒子 1 個の静止体積 = 256。40 万個 × 256 でも int32 に収まる）
 const WG = 256; // ワークグループのスレッド数
 const MOMENTS = 10; // 質量, Σx, Σy, Σz, Σxx, Σyy, Σzz, Σxy, Σyz, Σzx
 export const OPEN_FREE = 0, OPEN_INFLOW = 1, OPEN_CLOSED = 2; // 開口部の状態（格子点の境界条件）
@@ -326,7 +326,9 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
   // 部屋ごとの水量: 粒子をその位置の格子点の部屋で数える。格子の質量で数えると、壁の格子点に配られた分（壁際の粒子の
   // 質量の 1〜2 割）がどの部屋にも入らず水位を低く見積もる。ワークグループ内で数えてから全体に足す（アトミックの競合を減らす）
   // 実際の体積も数える: 弱圧縮の水は深さ 5 m で 12% 縮むので、粒子の数 × 静止体積では満水近くの部屋の水を多く見積もり、
-  // エアポケットの体積が 0 になったと誤って空気圧が跳ね上がった（船首倉庫で 3 bar、実測）
+  // エアポケットの体積が 0 になったと誤って空気圧が跳ね上がった（船首倉庫で 3 bar、実測）。
+  // 割るのは圧縮されている（密度比 > 1）ときだけ。壁際・水面の粒子は周りの格子の質量が足りず密度比が低く出るので、
+  // それで割ると小さな部屋ほど体積を多く数えた（食堂が 142%、実測）
   const hist = workgroupArray('int', MAX_ROOMS * 2).toAtomic();
   const roomCount = Fn(() => {
     const l = int(localId.x);
@@ -342,7 +344,7 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
         r.assign(roomOf.element(int(y.x).add(int(y.y).mul(strideY)).add(int(y.z).mul(strideZ))));
       });
       atomicAdd(hist.element(r), 1);
-      atomicAdd(hist.element(r.add(MAX_ROOMS)), int(float(VOLFIX).div(max(vel.element(instanceIndex).w, 0.5))));
+      atomicAdd(hist.element(r.add(MAX_ROOMS)), int(float(VOLFIX).div(max(vel.element(instanceIndex).w, 1))));
     });
     workgroupBarrier();
     If(l.lessThan(MAX_ROOMS * 2), () => { atomicAdd(roomAcc.element(l), atomicLoad(hist.element(l))); });

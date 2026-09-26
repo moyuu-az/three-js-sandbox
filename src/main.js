@@ -166,7 +166,7 @@ async function main() {
   }
   function updateLabelText(fills) {
     for (const l of labels) {
-      const f = fills[l.i] ?? 0, g = gauge[l.i] / 1e5;
+      const f = Math.min(1, fills[l.i] ?? 0), g = gauge[l.i] / 1e5;
       l.stat.textContent = `${Math.round(f * 100)}%${Math.abs(g) >= 0.05 ? ` ・ ${g > 0 ? '+' : '−'}${Math.abs(g).toFixed(2)} bar` : ''}`;
       l.div.classList.toggle('wet', f > 0.02);
       l.div.classList.toggle('pressed', g >= 0.05);
@@ -316,12 +316,29 @@ async function main() {
     { name: '居住区に被雷（右舷）', note: '第2甲板をまたぐ大破口。船倉と船室の両方に入り、傾き次第で通路 → 他の船室 → 水密扉 D1 → 機関室へ回る', at: [-1, 2.7, -0.3], size: [3.2, 2.6] },
     { name: '機関室に被雷', note: '最大の区画だが 1 区画なら浮く（水位が D1 の敷居に届かない）', at: [1, 1.6, -8.5], size: [1.8, 1.3] },
     { name: '船首 大破口', note: '船首区画と第1船倉。前のめりに沈む', at: [-1, 2.4, 11.2], size: [3.4, 1.8] },
+    // 後部を閉じ切ると、沈む船の後部に空気が閉じ込められる。深くなると閉じたハッチが水圧で押し破られ、流れ込む水に押された空気が
+    // 縮んで圧力が上がる（空気圧・破断の観察用）
+    { name: '後部を密閉して船首大破口', note: '水密扉と後部の開口（昇降口・甲板室の扉・機関室の通風筒）を閉じてから被雷。沈むにつれ閉じた区画に空気が閉じ込められ、ハッチが水圧で破れる', at: [-1, 2.4, 11.2], size: [3.4, 1.8], close: ['D1', 'D2', 'D3', 'o2', 'o3', 'o4', 'o5', 'o6', 'o7'] },
   ];
   $('scenarios').replaceChildren(...SCENARIOS.map((s) => {
     const b = document.createElement('button');
     b.className = 'scenario';
-    b.innerHTML = `<b>${s.name}</b><span>${s.note}</span>`;
-    b.onclick = () => { $('breachW').value = s.size[0]; $('breachH').value = s.size[1]; syncRanges(); launch([s.at[0] * 3, s.at[1], s.at[2]], s.at[0]); };
+    b.append(Object.assign(document.createElement('b'), { textContent: s.name }), Object.assign(document.createElement('span'), { textContent: s.note }));
+    b.onclick = () => {
+      if (run) return; // 魚雷が走っている間は扉も変えない（launch と同じ条件）
+      const toClose = (s.close ?? []).filter((id) => isOpen(id));
+      if (toClose.length) {
+        // まとめて閉じる（1 枚ずつ setDoor すると格子の作り直しと通知が枚数分起きる）
+        for (const id of toClose) {
+          if (id in gridState.doors) gridState.doors[id] = false; else gridState.seaOpenings[id] = false;
+          model.doors.get(id)?.set(false);
+        }
+        rebuild(); renderToggles();
+        toast(`閉鎖: ${toClose.map((id) => (Lo.DOORS.find((d) => d.id === id) ?? Lo.SEA_OPENINGS.find((o) => o.id === id)).name).join('・')}`);
+      }
+      $('breachW').value = s.size[0]; $('breachH').value = s.size[1]; syncRanges();
+      launch([s.at[0] * 3, s.at[1], s.at[2]], s.at[0]);
+    };
     return b;
   }));
   const syncRanges = () => { $('breachWOut').textContent = `${(+$('breachW').value).toFixed(1)} m`; $('breachHOut').textContent = `${(+$('breachH').value).toFixed(1)} m`; };
