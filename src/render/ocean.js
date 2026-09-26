@@ -116,11 +116,13 @@ export function createOcean(scene, { sunDir }) {
     mesh.frustumCulled = false;
     return mesh;
   }
-  const near = makeSurface(420, 700, 120, 200);
+  // 近景: 一辺 NEAR [m]・NEAR_SEGS 分割。波はカメラから 200 m で消える（中心はカメラに追従するので、遠景の穴 NEAR / 2 − 0.5 より内側で消えること）
+  const NEAR = 420, NEAR_SEGS = 700;
+  const near = makeSurface(NEAR, NEAR_SEGS, 120, 200);
   // 遠景は平ら（格子が粗く波を描くと揺らいで見える）。細かい波は法線だけ。
   // 近景と重なる範囲は抜く: 平らな遠景（y = −0.05）が近景の波の谷より上に来て、谷を平らに塗りつぶすため。
-  // 近景の端（中心から 210 m）は波が消えて平らなので、0.5 m だけ重ねて継ぎ目の隙間を防ぐ
-  const far = makeSurface(6000, 160, 0, 0.001, 420 / 2 - 0.5);
+  // 近景の端（中心から NEAR / 2）は波が消えて平らなので、0.5 m だけ重ねて継ぎ目の隙間を防ぐ
+  const far = makeSurface(6000, 160, 0, 0.001, NEAR / 2 - 0.5);
   far.position.y = -0.05; // 重なる帯では近景を優先
   scene.add(near, far);
 
@@ -148,7 +150,7 @@ export function createOcean(scene, { sunDir }) {
     u.time.value = t;
     u.cutSide.value = cutSide;
     u.shipInv.value.copy(tmpM.copy(shipGroup.matrixWorld).invert());
-    const step = 420 / 700;
+    const step = NEAR / NEAR_SEGS;
     for (const m of [near, far]) {
       const s = m === near ? step : 6000 / 160;
       m.position.x = Math.round(camera.position.x / s) * s;
