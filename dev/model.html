@@ -44,7 +44,7 @@ try {
   window.draw = () => {
     t += 1 / 30;
     model.group.updateMatrixWorld(true);
-    ocean.update(t, stage.camera, model.group, q.has('cut') ? 1 : 0);
+    ocean.update(t, stage.camera, model.group, q.has('cut') ? [1, 0] : null);
     stage.controls.update();
     pipeline.render();
   };

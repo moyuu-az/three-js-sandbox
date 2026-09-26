@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as V from '../src/voxel.js';
 import * as Lo from '../src/layout.js';
 import * as H from '../src/hull.js';
-import { buildShipGrid, breachAt } from '../src/shipgrid.js';
+import { buildShipGrid, breachAt, ruptureAt } from '../src/shipgrid.js';
 
 const h = 0.3;
 const R = (name) => Lo.ROOMS.findIndex((r) => r.name === name);
@@ -24,6 +24,11 @@ test('格子: どの部屋にも水の入る格子点があり、部屋の無い
   const { grid, capacity } = buildShipGrid(h);
   Lo.ROOMS.forEach((r, i) => assert.ok(capacity[i] > 5, `${r.name} の容積 ${capacity[i]}`));
   for (let n = 0; n < grid.N; n++) if (grid.type[n] === V.NODE_FLUID) assert.notEqual(grid.room[n], V.NO_ROOM);
+});
+
+test('船体: H.Y_MAX は上甲板で最も高い点（透視で「上部構造」を外す高さの元。これより低いと船首・船尾の甲板まで切れる）', () => {
+  for (let z = H.Z_MIN; z <= H.Z_MAX; z += 0.05) assert.ok(H.deckY(z) <= H.Y_MAX + 1e-12, `z=${z}`);
+  assert.equal(H.Y_MAX, Math.max(H.deckY(H.Z_MIN), H.deckY(H.Z_MAX)));
 });
 
 test('格子: 船外の格子点が船体を 1 層以上囲んでいる（粒子が格子の端に届かない）', () => {
@@ -151,4 +156,61 @@ test('格子: 格子間隔を変えても（品質プリセット）水密区画
     const e = reach(grid, nodeIn(grid, '第2船倉'));
     assert.ok(!e.has('機関室') && !e.has('第1船倉'), `h=${hh} ${[...e]}`);
   }
+});
+
+// ---------- 空気圧・水圧による破断の穴 ----------
+const unit = (v) => Math.abs(Math.hypot(...v) - 1) < 1e-6;
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+test('破断: 上甲板の穴は上向きの面、u・v・法線は直交する単位ベクトルで、その部屋の開口になる（名前・種類を引き継ぐ）', () => {
+  const z = 7.5, p = [1.0, H.deckY(z), z];
+  const b = ruptureAt(p, [0, 1, 0], 0.8, { kind: 'rupture', name: '破裂（第1船倉）' });
+  assert.deepEqual(b.normal, [0, 1, 0]);
+  for (const v of [b.u, b.v, b.normal]) assert.ok(unit(v));
+  assert.ok(Math.abs(dot3(b.u, b.v)) < 1e-9 && Math.abs(dot3(b.u, b.normal)) < 1e-9 && Math.abs(dot3(b.v, b.normal)) < 1e-9);
+  const { openings } = buildShipGrid(h, { ...allClosed, breaches: [b] });
+  const o = openings.filter((x) => x.kind === 'rupture');
+  assert.ok(o.length >= 1);
+  assert.equal(Lo.ROOMS[o[0].room].name, '第1船倉');
+  assert.equal(o[0].name, '破裂（第1船倉）');
+  assert.ok(Math.abs(o.reduce((s, x) => s + x.area, 0) - 0.64) < 1e-9, '面積 0.8 × 0.8');
+});
+
+test('破断: 舷側の穴は船体の曲面の法線（外向き）を使い、格子の向き（±x）とほぼ同じ向き', () => {
+  const z = 2, y = 2.2, x = -H.halfBreadth(z, y);
+  const b = ruptureAt([x, y, z], [-1, 0, 0], 0.8);
+  assert.ok(unit(b.normal) && b.normal[0] < -0.8, `${b.normal}`);
+  assert.deepEqual(b.normal.map((c) => +c.toFixed(9)), H.surfaceNormal(x, y, z).map((c) => +c.toFixed(9)));
+  const { openings } = buildShipGrid(h, { ...allClosed, breaches: [b] });
+  assert.ok(openings.some((o) => o.kind === 'breach' && Lo.ROOMS[o.room].comp === 'H2'), '魚雷と同じ breach 扱い（種類を渡さなければ）');
+});
+
+test('破断: 甲板室の壁の穴は格子の向きのまま（船体の曲面の法線を使わない）', () => {
+  const b = ruptureAt([Lo.HOUSE.hw, H.deckY(-10) + 1.5, -10], [1, 0, 0], 0.8);
+  assert.deepEqual(b.normal, [1, 0, 0]);
+});
+
+// ---------- 開口の数の上限 ----------
+test('上限: 開口が MAX_OPENINGS を超えたら、入らなかった片の数を dropped で知らせる（破断を開ける前に確かめるため）', () => {
+  // 既定で開いている甲板の開口 8 つ + 両舷に 1.5 m おきの破口 34 個で上限を超える
+  const breaches = [];
+  for (let z = -11; z <= 13; z += 1.5) for (const s of [1, -1]) breaches.push(breachAt(s * H.halfBreadth(z, 2), 2, z, 1.0, 0.8));
+  const full = buildShipGrid(h, { breaches });
+  assert.equal(full.openings.length, V.MAX_OPENINGS);
+  assert.ok(full.dropped > 0, `${full.dropped}`);
+  // 入りきらない片は格子にも開口として残らない。MAX_OPENINGS = OUT − IN なので、あふれた片を IN + MAX_OPENINGS と書くと
+  // 開口 0 の船外側（粒子を消す）になってしまう。種類の番号の範囲だけでは見分けられないので、元の格子点の側で確かめる:
+  // 船内側は水の格子点（部屋あり）を開口の部屋のまま、船外側は船外の格子点（部屋なし）だけ
+  for (let n = 0; n < full.grid.N; n++) {
+    const t = full.grid.type[n], r = full.grid.room[n];
+    if (t < V.NODE_OPENING_IN) continue;
+    assert.ok(t < V.NODE_OPENING_OUT + V.MAX_OPENINGS, `種類 ${t}`);
+    if (t < V.NODE_OPENING_OUT) assert.equal(r, full.openings[t - V.NODE_OPENING_IN].room, `船内側 ${t} の部屋`);
+    else assert.equal(r, V.NO_ROOM, `船外側 ${t} に部屋 ${r} の水の格子点が入った`);
+  }
+  assert.ok(V.MAX_OPENINGS >= 32, '常設 8 + 魚雷の破口 + 破断の余裕');
+  // 収まっていれば 0
+  const fits = buildShipGrid(h, { breaches: breaches.slice(0, 1) });
+  assert.equal(fits.dropped, 0);
+  assert.equal(buildShipGrid(h, allClosed).dropped, 0);
 });

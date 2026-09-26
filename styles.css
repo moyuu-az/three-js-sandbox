@@ -17,6 +17,21 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 13px/1.45 var(--font); }
 #app canvas { display: block; }
+/* 部屋のラベル（CSS2DRenderer）。パネルより下、キャンバスより上。クリックは船体へ通す */
+.labels { position: absolute; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.rlabel {
+  display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 3px 7px; border-radius: 8px;
+  background: rgb(8 20 30 / 0.55); border: 1px solid rgb(160 210 240 / 0.25); backdrop-filter: blur(4px);
+  color: #dfe9f1; font: 600 11px/1.2 var(--font); white-space: nowrap; text-shadow: 0 1px 2px rgb(0 0 0 / 0.6);
+}
+.rlabel span { font-size: 10px; font-weight: 700; color: rgb(200 220 235 / 0.75); font-variant-numeric: tabular-nums; }
+/* 水も空気圧も無い部屋は名前だけ小さく薄く（小さな部屋が密集しても、浸水した部屋が目立つように） */
+.rlabel:not(.wet):not(.pressed) { opacity: 0.55; padding: 1px 5px; font-size: 9.5px; }
+.rlabel:not(.wet):not(.pressed) span { display: none; }
+.rlabel.wet { border-color: rgb(76 195 255 / 0.7); }
+.rlabel.wet span { color: var(--accent); }
+.rlabel.pressed { border-color: var(--warn); }
+.rlabel.pressed span { color: var(--warn); }
 button, select, input { font: inherit; color: inherit; }
 
 .glass {
@@ -119,6 +134,8 @@ select { width: 100%; background: rgb(0 0 0 / 0.3); border: 1px solid var(--line
 #profile .wl { stroke: var(--accent); stroke-width: 0.06; stroke-dasharray: 0.4 0.3; opacity: 0.8; }
 #profile .label { fill: rgb(230 240 250 / 0.85); font-size: 0.42px; font-weight: 600; pointer-events: none; }
 #profile .pct { fill: #fff; font-size: 0.5px; font-weight: 800; pointer-events: none; }
+#profile .pres { fill: var(--warn); font-size: 0.42px; font-weight: 800; pointer-events: none; }
+#profile .room.pressed { fill: rgb(255 193 94 / 0.14); }
 #profile .door { cursor: pointer; }
 #profile .door rect { stroke-width: 0.06; }
 #profile .door.open rect { fill: rgb(255 193 94 / 0.3); stroke: var(--warn); }

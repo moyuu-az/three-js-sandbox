@@ -29,7 +29,7 @@ export function createOcean(scene, { sunDir }) {
   const u = {
     time: uniform(0),
     shipInv: uniform(new THREE.Matrix4()), // ワールド → 船体座標
-    cutSide: uniform(0), // 断面表示で切る側（船体座標の x の符号）。0 = 切らない
+    cutDir: uniform(new THREE.Vector2()), // 手前の海を切り取る向き（船体座標の水平 (x, z)、カメラの側）。0 ベクトル = 切らない
     center: uniform(new THREE.Vector2()), // メッシュの中心（カメラに追従）
     sunDir: uniform(sunDir.clone()),
   };
@@ -72,9 +72,12 @@ export function createOcean(scene, { sunDir }) {
     const hb = texture(hbTex, vec2(tu, tv)).r;
     return inRange.and(abs(p.x).lessThan(hb.sub(0.03)));
   };
-  // 断面表示で切り取る範囲（船の手前側の箱）
+  // 断面・透視表示で切り取る範囲: 船の中心から cutDir の側へ x、横へ ±z の箱（断面は船の横向き、透視はカメラの方位に合わせて回る）
   const CUT_BOX = { x: 80, z: H.L / 2 + 6 }; // 手前側は広く切る（狭いと、低い位置のカメラから見て手前の海面が船の水面下を隠す）
-  const inCutBox = (p) => u.cutSide.notEqual(0).and(p.x.mul(u.cutSide).greaterThan(-0.02)).and(p.x.mul(u.cutSide).lessThan(CUT_BOX.x)).and(abs(p.z).lessThan(CUT_BOX.z));
+  const inCutBox = (p) => {
+    const a = p.x.mul(u.cutDir.x).add(p.z.mul(u.cutDir.y)), b = p.z.mul(u.cutDir.x).sub(p.x.mul(u.cutDir.y));
+    return dot(u.cutDir, u.cutDir).greaterThan(0.25).and(a.greaterThan(-0.02)).and(a.lessThan(CUT_BOX.x)).and(abs(b).lessThan(CUT_BOX.z));
+  };
 
   const ripple = rippleNormalMap(512);
   // hole: メッシュの中心からこの半幅の正方形の中は描かない（遠景で、近景と重なる範囲を抜く）
@@ -138,7 +141,7 @@ export function createOcean(scene, { sunDir }) {
   })();
   secMat.opacityNode = mix(float(0.97), float(0.6), secK);
   const BOT = -26, TOPY = 8;
-  const section = new THREE.Group(); // 船体座標。x の向きは切る側に合わせて毎フレーム反転する
+  const section = new THREE.Group(); // 船体座標。局所 x を切る向き（cutDir）に合わせて毎フレーム回す
   const face = (geo) => { const m = new THREE.Mesh(geo, secMat); m.renderOrder = 3; m.frustumCulled = false; section.add(m); };
   face(new THREE.PlaneGeometry(2 * CUT_BOX.z, TOPY - BOT).rotateY(Math.PI / 2).translate(0, (TOPY + BOT) / 2, 0)); // 中心面
   face(new THREE.PlaneGeometry(CUT_BOX.x, 2 * CUT_BOX.z).rotateX(-Math.PI / 2).translate(CUT_BOX.x / 2, BOT, 0)); // 底
@@ -146,9 +149,10 @@ export function createOcean(scene, { sunDir }) {
   section.visible = false;
 
   const tmpM = new THREE.Matrix4();
-  function update(t, camera, shipGroup, cutSide) {
+  // cutDir: [dx, dz]（単位ベクトル、船体座標）または null（切らない）
+  function update(t, camera, shipGroup, cutDir) {
     u.time.value = t;
-    u.cutSide.value = cutSide;
+    u.cutDir.value.set(cutDir ? cutDir[0] : 0, cutDir ? cutDir[1] : 0);
     u.shipInv.value.copy(tmpM.copy(shipGroup.matrixWorld).invert());
     const step = NEAR / NEAR_SEGS;
     for (const m of [near, far]) {
@@ -159,8 +163,8 @@ export function createOcean(scene, { sunDir }) {
     u.center.value.set(near.position.x, near.position.z);
     // 遠景は中心がずれるので別の一様変数にせず、近景と同じ中心を使う（遠景の格子は粗いので誤差は見えない）
     far.position.x = near.position.x; far.position.z = near.position.z;
-    section.visible = cutSide !== 0;
-    section.scale.x = cutSide || 1;
+    section.visible = !!cutDir;
+    if (cutDir) section.rotation.y = Math.atan2(-cutDir[1], cutDir[0]);
   }
 
   return { near, far, section, uniforms: u, setWaves, update, cutBox: CUT_BOX };

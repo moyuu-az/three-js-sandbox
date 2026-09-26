@@ -7,7 +7,9 @@ export const NODE_SOLID = 1; // 構造（甲板・隔壁・壁・機械）
 export const NODE_EXTERIOR = 2; // 船外。ここに入った粒子は船外へ出たものとして消す
 export const NODE_OPENING_IN = 16; // + 開口部番号。開口部の船内側
 export const NODE_OPENING_OUT = 48; // + 開口部番号。開口部の船外側（粒子は消す）
-export const MAX_OPENINGS = 16;
+// 開口の数の上限。種類の番号は船内側 16..47・船外側 48..79 なので、OUT − IN = 32 個まで表せる。
+// 常設の開口 8 + 魚雷の破口（部屋をまたぐと部屋ごとに 1 つ）+ 空気圧・水圧による破断が入る余裕を取る
+export const MAX_OPENINGS = NODE_OPENING_OUT - NODE_OPENING_IN;
 export const MAX_ROOMS = 32;
 export const NO_ROOM = MAX_ROOMS - 1; // 部屋に属さない格子点の集計先
 const MAX_DIST = 1e3;

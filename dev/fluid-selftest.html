@@ -134,6 +134,10 @@ const t0 = performance.now();
   check('静水: 他の部屋に漏れない', [...cnt.keys()].every((r) => r === room || r === V.NO_ROOM), JSON.stringify([...cnt]));
   const gpuRooms = fluid.stats.roomMass;
   check('静水: GPU の部屋ごとの集計がほぼ全粒子をその部屋に数える（水位計算の元、誤差 0.5% 未満）', gpuRooms[room] > ps.length * 0.995, `部屋 ${gpuRooms[room]} / 全 ${ps.length}、部屋なし ${gpuRooms[V.NO_ROOM]}`);
+  // 実際の体積（空気の体積の元）: 縮んだ分だけ粒子数より少なく、しかし弱圧縮の範囲（水深 ~2 m で数 %）を超えて少なくない。
+  // 粒子数より多いなら、壁際・水面の低い密度比で割っている（小さな部屋で浸水率が 142% になった不具合の再発）
+  const vol = fluid.stats.roomVolume[room] + fluid.stats.roomVolume[V.NO_ROOM];
+  check('静水: GPU の部屋ごとの実際の体積は粒子数以下で、縮みは 10% 未満', vol <= ps.length * 1.001 && vol > ps.length * 0.9, `体積 ${vol.toFixed(0)} / 粒子 ${ps.length}（静止体積 = 1）`);
   check('静水: NaN が無い', !nan(ps), '');
   const ys = ps.map((p) => p.y).sort((a, b) => a - b);
   const top = ys[Math.floor(ys.length * 0.995)];
@@ -190,6 +194,43 @@ if (window.ONLY1) { window.done = true; throw new Error('only1'); }
   const top = (r) => { const ys = ps.filter((p) => roomOfP(b.grid, p) === r).map((p) => p.y).sort((a, c) => a - c); return ys.length ? ys[Math.floor(ys.length * 0.98)] : NaN; };
   const d = Math.abs(top(er) - top(sg)) * h;
   check('扉: 開いた水密扉を通って隣室へ流れ、水位がそろう（差 < 0.3 m）', d < 0.3, `機関室 ${(top(er) * h).toFixed(2)} / 操舵機室 ${(top(sg) * h).toFixed(2)}（格子の y、m）`);
+}
+
+// ---------- 3b) 空気圧: 同じ扉で、操舵機室の空気だけ 0.6 m 水頭だけ高い → 操舵機室の水面が 0.6 m 低いところで釣り合う ----------
+{
+  const b = buildShipGrid(h, { ...allClosed, doors: { ...allClosed.doors, D3: true } });
+  fluid.setGrid(V.packForGpu(b.grid));
+  const er = R('機関室'), sg = R('操舵機室');
+  const nodes = F.roomNodes(b.grid, Lo.ROOMS.length);
+  const H0 = +(Q0.get('airh') ?? 0.6);
+  let nInit = 0;
+  // 水位は部屋の粒子数（圧縮なしの体積）から求める。アプリは圧縮を割り戻した体積（stats.roomVolume）を使うが、ここでは
+  // 段差なし（head = 0）の水位差を引いて比べるので、縮みの分の偏りは打ち消される
+  const levelDiff = async (head) => {
+    const heads = new Array(V.MAX_ROOMS).fill(0);
+    heads[sg] = head;
+    fluid.setRoomHeads(heads, h);
+    // 両室を同じ高さ（船体座標 y = 2.2 m）まで満たして始める（釣り合いに要る移動を小さくし、狭い扉越しの流れを待たずに済む）
+    const pts = [];
+    for (let n = 0; n < b.grid.N; n++) {
+      if (b.grid.type[n] !== V.NODE_FLUID || (b.grid.room[n] !== er && b.grid.room[n] !== sg)) continue;
+      const [i, j, k] = b.grid.coords(n);
+      if (b.grid.pos(i, j, k)[1] > 2.2) continue;
+      for (let a = 0; a < 2; a++) for (let c = 0; c < 2; c++) for (let e = 0; e < 2; e++) pts.push(i + 0.25 + a * 0.5, j + 0.25 + c * 0.5, k + 0.25 + e * 0.5);
+    }
+    nInit = pts.length / 3;
+    fluid.init(new Float32Array(pts));
+    await run(+(Q0.get('airT') ?? 40));
+    const ps = await particles();
+    const cnt = countBy(b.grid, ps);
+    const lv = (r) => F.waterLevel(nodes[r], h, (cnt.get(r) ?? 0) * Vp, [0, 1, 0]);
+    return { d: lv(er) - lv(sg), er: lv(er), sg: lv(sg), ps };
+  };
+  const base = await levelDiff(0), r = await levelDiff(H0);
+  const d = r.d - base.d;
+  check(`空気圧: 扉の向こうの空気が ${H0} m 水頭だけ高いと、そちらの水面がその分低い（±25%）`, Math.abs(d - H0) < 0.25 * H0 && !nan(r.ps), `水位差 ${r.d.toFixed(2)} m − 段差なし ${base.d.toFixed(2)} m = ${d.toFixed(2)} m（機関室 ${r.er.toFixed(2)} / 操舵機室 ${r.sg.toFixed(2)}）`);
+  check('空気圧: 粒子が消えない', r.ps.length === nInit, `${r.ps.length} / ${nInit}`);
+  fluid.setRoomHeads(new Array(V.MAX_ROOMS).fill(0), h);
 }
 
 // ---------- 4) 流入: 空の船に破口 → 生成した分だけ粒子が増え、破口の部屋に溜まる ----------

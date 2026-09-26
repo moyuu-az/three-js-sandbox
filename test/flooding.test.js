@@ -87,3 +87,28 @@ test('実船: 喫水線下の破口の流量は、深さに見合った値にな
   assert.equal(nodes.length, Lo.ROOMS.length);
   assert.ok(nodes.every((a) => a.length > 0));
 });
+
+// ---------- 浸水・満水の通知 ----------
+test('通知: しきい値を超えたときに 1 回だけ。しきい値の前後で揺れても、下のしきい値を割るまで繰り返さない', () => {
+  let st = [];
+  const step = (fills) => { const r = F.fillAlerts(fills, st); st = r.notified; return r.events.map((e) => `${e.room}:${e.kind}`); };
+  assert.deepEqual(step([0, 0]), []);
+  assert.deepEqual(step([0.03, 0]), ['0:wet']);
+  assert.deepEqual(step([0.96, 0]), ['0:full']);
+  // 満水の前後で揺れる（再現: 船室 左3 が満水 を 4 回通知した）
+  for (const f of [0.94, 0.96, 0.9, 0.97, 0.86, 0.95]) assert.deepEqual(step([f, 0]), [], `f=${f}`);
+  // 十分下がってから（0.85 未満）もう一度満ちたら知らせる
+  assert.deepEqual(step([0.8, 0]), []);
+  assert.deepEqual(step([0.95, 0]), ['0:full']);
+  // 浸水も同じ（0.01 未満に戻るまで繰り返さない）
+  assert.deepEqual(step([0.95, 0.021]), ['1:wet']);
+  for (const f of [0.019, 0.025, 0.011]) assert.deepEqual(step([0.95, f]), [], `f=${f}`);
+  assert.deepEqual(step([0.95, 0.005]), []);
+  assert.deepEqual(step([0.95, 0.03]), ['1:wet']);
+});
+
+test('通知: 最初から満水の部屋は浸水と満水を 1 回ずつ。NaN（容積 0 の部屋）は知らせない', () => {
+  const r = F.fillAlerts([1, NaN]);
+  assert.deepEqual(r.events.map((e) => `${e.room}:${e.kind}`), ['0:wet', '0:full']);
+  assert.deepEqual(F.fillAlerts([1, NaN], r.notified).events, []);
+});

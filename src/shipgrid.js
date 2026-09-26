@@ -99,6 +99,7 @@ export function buildShipGrid(h, state = {}) {
 
   // 船外への開口: 開口面の前後 2 格子の範囲を、船内側 = OPENING_IN、船外側 = OPENING_OUT にする
   const openings = [];
+  let dropped = 0; // MAX_OPENINGS を超えて格子に入らなかった開口の片（部屋ごと）の数。呼び出し側が「開けたつもりの穴が無い」を知るため
   const carve = (o, meta) => {
     // 軸が単位ベクトルでない開口（船体の外の点で作った破口は法線が 0 になる）を通すと、範囲判定が全格子点で真になり船全体が開口になる
     if (![o.normal, o.u, o.v].every((a) => Math.abs(Math.hypot(...a) - 1) < 1e-3) || !(o.half[0] > 0 && o.half[1] > 0)) return;
@@ -120,7 +121,7 @@ export function buildShipGrid(h, state = {}) {
     if (total === 0) return;
     const pieces = [...inner.entries()].sort((p, q) => q[1].length - p[1].length);
     for (const [r, ns] of pieces) {
-      if (openings.length >= V.MAX_OPENINGS) break;
+      if (openings.length >= V.MAX_OPENINGS) { dropped++; continue; }
       const k = openings.length;
       for (const n of ns) type[n] = V.NODE_OPENING_IN + k;
       // 船外側の格子点は一番大きい部屋の開口に付ける（粒子を消すだけなので番号はどれでもよい）
@@ -141,7 +142,7 @@ export function buildShipGrid(h, state = {}) {
     if (!(state.seaOpenings?.[o.id] ?? o.open)) continue;
     carve(o, { id: o.id, name: o.name, kind: o.kind });
   }
-  (state.breaches ?? []).forEach((b, i) => carve(b, { id: `b${i}`, name: `破口 ${i + 1}`, kind: 'breach', breach: i }));
+  (state.breaches ?? []).forEach((b, i) => carve(b, { id: `b${i}`, name: b.name ?? `破口 ${i + 1}`, kind: b.kind ?? 'breach', breach: i }));
 
   // 部屋ごとの容積（格子点数 × h³）
   const capacity = new Float64Array(Lo.ROOMS.length);
@@ -149,7 +150,17 @@ export function buildShipGrid(h, state = {}) {
     const t = type[n];
     if ((t === V.NODE_FLUID || (t >= V.NODE_OPENING_IN && t < V.NODE_OPENING_OUT)) && room[n] < Lo.ROOMS.length) capacity[room[n]] += h ** 3;
   }
-  return { grid, openings, capacity };
+  return { grid, openings, capacity, dropped };
+}
+
+// 法線 n の面に張る単位ベクトル u, v。u: 法線と上向きの外積（前後方向）、v: 法線と u の外積（おおむね上下）。
+// 法線がほぼ上下（甲板）なら u は船の横方向
+function faceAxes(n) {
+  let u = Math.abs(n[1]) > 0.9 ? [1, 0, 0] : [-n[2], 0, n[0]];
+  const ul = Math.hypot(...u) || 1;
+  u = u.map((a) => a / ul);
+  const v = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+  return { u, v };
 }
 
 // 舷側の点 (x, y, z) に大きさ w × hgt の破口を開ける情報。u は船の前後方向に沿う
@@ -158,10 +169,16 @@ export function breachAt(x, y, z, w = 1.6, hgt = 1.2) {
   const hb = H.halfBreadth(z, y);
   const c = [side * Math.max(0, hb), y, z];
   const n = H.surfaceNormal(c[0], y, z);
-  // u: 法線と上向きの外積（前後方向）、v: 法線と u の外積（おおむね上下）
-  let u = [n[1] * 0 - n[2] * 1, n[2] * 0 - n[0] * 0, n[0] * 1 - n[1] * 0];
-  const ul = Math.hypot(...u) || 1;
-  u = u.map((a) => a / ul);
-  const v = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
-  return { center: c, normal: n, u, v, half: [w / 2, hgt / 2] };
+  return { center: c, normal: n, ...faceAxes(n), half: [w / 2, hgt / 2] };
+}
+
+/**
+ * 空気圧・水圧で外板が破れた穴。p: 外板の点（air.envelopePoints）、axis: 格子の面の向き（船外向き）。
+ * 舷側なら船体の曲面の法線を使う。甲板・甲板室の壁は格子の向きのまま
+ */
+export function ruptureAt(p, axis, size = 0.8, meta = {}) {
+  const onHull = Math.abs(axis[1]) < 0.5 && H.inside(p[0] - axis[0] * 0.2, p[1], p[2] - axis[2] * 0.2) && !Lo.inHouse(p[0], p[1], p[2]);
+  let n = onHull ? H.surfaceNormal(p[0], p[1], p[2]) : axis;
+  if (!(Math.abs(Math.hypot(...n) - 1) < 1e-3)) n = axis;
+  return { center: [...p], normal: n, ...faceAxes(n), half: [size / 2, size / 2], ...meta };
 }

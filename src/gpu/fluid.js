@@ -14,6 +14,7 @@ import {
 import { NODE_SOLID, NODE_EXTERIOR, NODE_OPENING_IN, NODE_OPENING_OUT, MAX_OPENINGS, MAX_ROOMS, NO_ROOM } from '../voxel.js';
 
 const FIX = 65536; // アトミック加算用の固定小数点の倍率（WebGPU の atomic は整数のみ）
+const VOLFIX = 256; // 部屋ごとの実際の体積の固定小数点の倍率（粒子 1 個の静止体積 = 256。40 万個 × 256 でも int32 に収まる）
 const WG = 256; // ワークグループのスレッド数
 const MOMENTS = 10; // 質量, Σx, Σy, Σz, Σxx, Σyy, Σzz, Σxy, Σyz, Σzx
 export const OPEN_FREE = 0, OPEN_INFLOW = 1, OPEN_CLOSED = 2; // 開口部の状態（格子点の境界条件）
@@ -55,7 +56,8 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
   const nodeInfo = instancedArray(N, 'vec4'); // xyz = 滑り境界の法線（向きは問わない）, w = 種類
   const sdf = instancedArray(N, 'vec4'); // xyz = 最寄りの固体から離れる向き, w = 最寄りの固体までの距離 [セル]
   const roomOf = instancedArray(N, 'int');
-  const roomAcc = instancedArray(MAX_ROOMS, 'int').toAtomic();
+  // 部屋ごとの集計: [0, MAX_ROOMS) = 粒子の数、[MAX_ROOMS, 2·MAX_ROOMS) = 実際の体積（粒子の静止体積 = VOLFIX、密度比で割る）
+  const roomAcc = instancedArray(MAX_ROOMS * 2, 'int').toAtomic();
   const nWG = Math.ceil(N / WG);
   const partials = instancedArray(nWG * MOMENTS, 'float');
 
@@ -80,6 +82,8 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     ay: uniformArray(new Array(MAX_OPENINGS).fill(0).map(() => new THREE.Vector4()), 'vec4'), // 生成範囲の半軸 2
     vel: uniformArray(new Array(MAX_OPENINGS).fill(0).map(() => new THREE.Vector4()), 'vec4'), // 生成時の速度
   };
+  // 部屋の空気の圧力（x = g·水頭 / h² [セル²/s²]）。setRoomHeads で入れる
+  const roomPhi = uniformArray(new Array(MAX_ROOMS).fill(0).map(() => new THREE.Vector4()), 'vec4');
 
   // ---------- 共通: 2 次 B スプラインの 3×3×3 ステンシル（JS 側で展開して WGSL に直書きする） ----------
   const strideY = nx, strideZ = nx * ny;
@@ -177,12 +181,24 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     v.addAssign(acc.mul(u.dt));
     const info = nodeInfo.element(i);
     const type = info.w.toVar();
+    // 部屋の空気の圧力: 水面を押す空気の圧力は、部屋の中では一様なので流れを生まず、別の部屋との境目（開いた扉・ハッチ）でだけ
+    // 圧力の段差として効く。境目の両側の 2 格子点に −∇φ（中心差分）を掛けると、合計でちょうど ρ·g·Δ水頭 の段差になる。
+    // 隣が壁・船外・部屋なしなら自分と同じ値（段差なし）。
+    // 圧力は体積に働く力なので、格子点の質量が静止密度より少ない分（扉は狭く、格子点のほとんどが壁際で、粒子を壁から離して
+    // 置くため質量が 5〜8 割になる）は ρ₀/m で補う（最大 2 倍）。補わないと段差が 7 割しか効かなかった（セルフテストで実測）
+    const room = roomOf.element(i).toVar();
+    If(room.lessThan(NO_ROOM).and(type.equal(0).or(type.greaterThanEqual(NODE_OPENING_IN).and(type.lessThan(NODE_OPENING_OUT)))), () => {
+      const phi0 = roomPhi.element(room).x;
+      const phi = (off) => { const r = roomOf.element(i.add(off)); return select(r.lessThan(NO_ROOM), roomPhi.element(r).x, phi0); };
+      const fill = clamp(float(rho0).div(m), 1, 2);
+      v.subAssign(vec3(phi(1).sub(phi(-1)), phi(strideY).sub(phi(-strideY)), phi(strideZ).sub(phi(-strideZ))).mul(u.dt.mul(0.5).mul(fill)));
+    });
     const n = info.xyz;
     const slip = () => {
       If(dot(n, n).greaterThan(0.5), () => { v.subAssign(n.mul(dot(v, n))); }).Else(() => { v.assign(vec3(0)); });
     };
     If(type.equal(NODE_SOLID).or(type.equal(NODE_EXTERIOR)), slip).ElseIf(type.greaterThanEqual(NODE_OPENING_IN), () => {
-      const k = int(type).sub(NODE_OPENING_IN).mod(32); // 開口部の番号（内側・外側とも）
+      const k = int(type).sub(NODE_OPENING_IN).mod(MAX_OPENINGS); // 開口部の番号（内側・外側とも。MAX_OPENINGS = OUT − IN）
       const s = open.state.element(k);
       If(s.w.equal(OPEN_INFLOW), () => { v.assign(s.xyz); }).ElseIf(s.w.equal(OPEN_CLOSED), slip);
     });
@@ -286,7 +302,7 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
   })().compute(1, [1]);
 
   // 集計: 質量モーメント（ワークグループ内で総和 → 部分和を CPU で合計）と部屋ごとの水量
-  const clearRooms = Fn(() => { atomicStore(roomAcc.element(instanceIndex), 0); })().compute(MAX_ROOMS, [MAX_ROOMS]);
+  const clearRooms = Fn(() => { atomicStore(roomAcc.element(instanceIndex), 0); })().compute(MAX_ROOMS * 2, [MAX_ROOMS * 2]);
   const shared = new Array(MOMENTS).fill(0).map(() => workgroupArray('float', WG));
   const stats = Fn(() => {
     const i = int(instanceIndex);
@@ -309,10 +325,14 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
 
   // 部屋ごとの水量: 粒子をその位置の格子点の部屋で数える。格子の質量で数えると、壁の格子点に配られた分（壁際の粒子の
   // 質量の 1〜2 割）がどの部屋にも入らず水位を低く見積もる。ワークグループ内で数えてから全体に足す（アトミックの競合を減らす）
-  const hist = workgroupArray('int', MAX_ROOMS).toAtomic();
+  // 実際の体積も数える: 弱圧縮の水は深さ 5 m で 12% 縮むので、粒子の数 × 静止体積では満水近くの部屋の水を多く見積もり、
+  // エアポケットの体積が 0 になったと誤って空気圧が跳ね上がった（船首倉庫で 3 bar、実測）。
+  // 割るのは圧縮されている（密度比 > 1）ときだけ。壁際・水面の粒子は周りの格子の質量が足りず密度比が低く出るので、
+  // それで割ると小さな部屋ほど体積を多く数えた（食堂が 142%、実測）
+  const hist = workgroupArray('int', MAX_ROOMS * 2).toAtomic();
   const roomCount = Fn(() => {
     const l = int(localId.x);
-    If(l.lessThan(MAX_ROOMS), () => { atomicStore(hist.element(l), 0); });
+    If(l.lessThan(MAX_ROOMS * 2), () => { atomicStore(hist.element(l), 0); });
     workgroupBarrier();
     const p = pos.element(instanceIndex);
     If(p.w.greaterThan(0.5), () => {
@@ -324,9 +344,11 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
         r.assign(roomOf.element(int(y.x).add(int(y.y).mul(strideY)).add(int(y.z).mul(strideZ))));
       });
       atomicAdd(hist.element(r), 1);
+      // 四捨五入（切り捨てだと圧縮された粒子ごとに平均 0.5 / 256 ずつ少なく数え、満水の部屋に 0.2% の偽のエアポケットが残る）
+      atomicAdd(hist.element(r.add(MAX_ROOMS)), int(float(VOLFIX).div(max(vel.element(instanceIndex).w, 1)).add(0.5)));
     });
     workgroupBarrier();
-    If(l.lessThan(MAX_ROOMS), () => { atomicAdd(roomAcc.element(l), atomicLoad(hist.element(l))); });
+    If(l.lessThan(MAX_ROOMS * 2), () => { atomicAdd(roomAcc.element(l), atomicLoad(hist.element(l))); });
   })().compute(P, [WG]);
 
   // ---------- CPU 側の管理 ----------
@@ -396,7 +418,8 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
       hwUpper = Math.min(hwUpper, P, high + (spawnIssued - mark));
       latest = {
         high, free: c[C_FREE_TOP], killed: c[C_KILLED], reverts: c[C_REVERT], alive: high - c[C_FREE_TOP],
-        roomMass: Array.from(new Int32Array(rooms)), // 粒子の数
+        roomMass: Array.from(new Int32Array(rooms).subarray(0, MAX_ROOMS)), // 粒子の数
+        roomVolume: Array.from(new Int32Array(rooms).subarray(MAX_ROOMS), (v) => v / VOLFIX), // 実際の体積（粒子の静止体積を 1 とする）
         moments: mom, center: [nx / 2, ny / 2, nz / 2],
       };
     } finally {
@@ -411,6 +434,15 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     open.ax.array[k].set(ax[0], ax[1], ax[2], 0);
     open.ay.array[k].set(ay[0], ay[1], ay[2], 0);
     open.vel.array[k].set(spawnVel[0], spawnVel[1], spawnVel[2], 0);
+  }
+
+  // 部屋ごとの空気のゲージ圧を水頭 [m] で入れる（h: 格子間隔 [m]）。境目の段差が大きすぎると、弱圧縮の水が段差の分だけ縮んで
+  // 安定条件（fluidParams は水深 5 m 相当）を外れるので、水頭は −2〜10 m に抑える（破断の強度で実際はこの範囲に収まる）
+  function setRoomHeads(heads, h) {
+    for (let r = 0; r < MAX_ROOMS; r++) {
+      const H = Number.isFinite(heads[r]) ? Math.min(10, Math.max(-2, heads[r])) : 0;
+      roomPhi.array[r].x = (9.81 * H) / (h * h);
+    }
   }
 
   // 初期配置（テスト・デモ用）。xyz を格子座標で並べた配列
@@ -430,7 +462,7 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
 
   return {
     dims, ppc, init, maxParticles: P, uniforms: u, buffers: { pos, vel, gridV },
-    setGrid, setOpening, step,
+    setGrid, setOpening, setRoomHeads, step,
     get stats() { return latest; },
     get drawCount() { return hwUpper; },
   };
