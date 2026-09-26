@@ -164,6 +164,26 @@ export function buildShipModel({ h, draft }) {
   // 甲板室の床
   deckSurface(Lo.HOUSE.z0 + 0.05, Lo.HOUSE.z1 - 0.05, (z) => H.deckY(z) + 0.012, [{ x: stair.box.x, z: stair.box.z }], M.floor, 30, 20, Lo.HOUSE.hw - 0.05);
 
+  // ---------- 骨組み: 外板内側の肋骨（フレーム）と甲板下のビーム（0.6 m 間隔）。断面表示で船らしい内部に見せる ----------
+  for (let z = H.Z_MIN + 0.6; z < H.Z_MAX - 0.4; z += 0.6) {
+    if (Lo.BULKHEADS.some((b) => Math.abs(b - z) < 0.2)) continue;
+    const y0 = Math.max(H.TANK_TOP, H.keelY(z) + 0.05), y1 = H.deckY(z) - 0.08;
+    if (hbAt(z, (y0 + y1) / 2) < 0.6) continue;
+    for (const sgn of [1, -1]) {
+      const pts = [];
+      for (let k = 0; k <= 10; k++) { const y = y0 + ((y1 - y0) * k) / 10; pts.push([sgn * (hbAt(z, y) - 0.02), y]); }
+      // 外板に沿った細い帯（奥行き 0.14 m、厚さ 0.03 m）
+      const strip = pts.map(([x, y]) => [x - sgn * 0.14, y]).reverse();
+      B.add(M.primer, plate([...pts, ...strip], [], 0.03, (a, b, c) => [a, b, z + c], 0.3));
+    }
+    // 上甲板の下のビーム（甲板室の床下と船室の天井は省略しない。見えるのは断面だけ）
+    // 開口（ハッチ・ケーシング・階段）の上を横切るビームは置かない
+    const crosses = (holes) => holes.some((r) => z > r.z[0] - 0.05 && z < r.z[1] + 0.05);
+    const yd = H.deckY(z) - 0.1, hb = hbAt(z, yd) - 0.05;
+    if (hb > 0.5 && !crosses(deckHoles)) B.add(M.primer, box(2 * hb, 0.16, 0.08, 0, yd, z));
+    if (z > Lo.BULKHEADS[0] && z < Lo.BULKHEADS[3] && !crosses(d2holes)) { const hb2 = hbAt(z, deck2) - 0.05; if (hb2 > 0.5) B.add(M.primer, box(2 * hb2, 0.14, 0.07, 0, deck2 - 0.11, z)); }
+  }
+
   // ---------- 隔壁・壁（layout.PLATES）。扉・ハッチの位置は穴にする ----------
   // 板 p（面の座標 at）を貫く扉。面の座標が扉の範囲に入り、板の広がりとも重なるものだけ
   const overlap = (a, b) => a && b && Math.min(a[1], b[1]) > Math.max(a[0], b[0]);

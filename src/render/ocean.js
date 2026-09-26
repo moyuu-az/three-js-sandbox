@@ -128,7 +128,7 @@ export function createOcean(scene, { sunDir }) {
     Discard(secDepth.lessThan(0).or(insideHull(pl)));
     return mix(vec3(0.004, 0.025, 0.05), vec3(0.05, 0.32, 0.4), secK);
   })();
-  secMat.opacityNode = mix(float(0.92), float(0.55), secK);
+  secMat.opacityNode = mix(float(0.97), float(0.6), secK);
   const BOT = -26, TOPY = 8;
   const section = new THREE.Group(); // 船体座標。x の向きは切る側に合わせて毎フレーム反転する
   const face = (geo) => { const m = new THREE.Mesh(geo, secMat); m.renderOrder = 3; m.frustumCulled = false; section.add(m); };
