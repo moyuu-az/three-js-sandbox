@@ -85,6 +85,15 @@ test('ボイル: 入ってくる水の圧力（pMax）より高くは縮まず�
   near(air.amount[0], 1.3 * 0.5, 1e-12, '空気量も上限に合わせて減る（抜けた）');
 });
 
+test('ボイル: 満水で空気を失った部屋の水位が見積もりの揺れで少し下がっても、真空（−1 bar）にしない', () => {
+  const air = A.createAir([10]);
+  A.equalize(air, [0], A.airVolumes([10], [10], [Infinity])); // 満水 → 空気 0
+  assert.equal(air.amount[0], 0);
+  A.equalize(air, [0], A.airVolumes([10], [9.97], [4.9])); // 0.03 m³ の空き
+  near(air.pressure[0], 1, 1e-12, 'ゲージ 0');
+  assert.ok(air.amount[0] > 0);
+});
+
 test('ボイル: 水で空気の体積が 0 に近づいても圧力は上限で止まり、NaN にならない', () => {
   const air = A.createAir([10]);
   A.equalize(air, [0], A.airVolumes([10], [10 - 1e-9], [5]));

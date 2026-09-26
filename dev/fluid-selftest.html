@@ -134,6 +134,10 @@ const t0 = performance.now();
   check('静水: 他の部屋に漏れない', [...cnt.keys()].every((r) => r === room || r === V.NO_ROOM), JSON.stringify([...cnt]));
   const gpuRooms = fluid.stats.roomMass;
   check('静水: GPU の部屋ごとの集計がほぼ全粒子をその部屋に数える（水位計算の元、誤差 0.5% 未満）', gpuRooms[room] > ps.length * 0.995, `部屋 ${gpuRooms[room]} / 全 ${ps.length}、部屋なし ${gpuRooms[V.NO_ROOM]}`);
+  // 実際の体積（空気の体積の元）: 縮んだ分だけ粒子数より少なく、しかし弱圧縮の範囲（水深 ~2 m で数 %）を超えて少なくない。
+  // 粒子数より多いなら、壁際・水面の低い密度比で割っている（小さな部屋で浸水率が 142% になった不具合の再発）
+  const vol = fluid.stats.roomVolume[room] + fluid.stats.roomVolume[V.NO_ROOM];
+  check('静水: GPU の部屋ごとの実際の体積は粒子数以下で、縮みは 10% 未満', vol <= ps.length * 1.001 && vol > ps.length * 0.9, `体積 ${vol.toFixed(0)} / 粒子 ${ps.length}（静止体積 = 1）`);
   check('静水: NaN が無い', !nan(ps), '');
   const ys = ps.map((p) => p.y).sort((a, b) => a - b);
   const top = ys[Math.floor(ys.length * 0.995)];

@@ -34,7 +34,7 @@ const QUALITY = {
 const PPC = 8; // 1 セルあたりの粒子数（静止時）
 const BOTTOM_PROBES = [[0, 0, 0], [0, H.keelY(H.Z_MAX), H.Z_MAX], [0, H.keelY(H.Z_MIN), H.Z_MIN], [0, H.deckY(H.Z_MAX), H.Z_MAX], [0, H.deckY(H.Z_MIN), H.Z_MIN], [H.B / 2, H.D, 0], [-H.B / 2, H.D, 0], [0, Lo.HOUSE.top, -8]];
 const MAX_SUBSTEPS = 10; // 1 フレームの流体サブステップの上限（GPU の負荷の上限。超えるとスロー再生になる）
-const MAX_RUPTURES = 6; // 破断の数の上限（開口は格子に MAX_OPENINGS 個まで。常設の開口と魚雷の破口の分を残す）
+const MAX_RUPTURES = 8; // 破断の数の上限（開口は格子に MAX_OPENINGS = 32 個まで。常設の開口 8 と魚雷の破口の分を残す）
 
 const $ = (id) => document.getElementById(id);
 const store = { get: (k, d) => { try { return JSON.parse(sessionStorage.getItem(k)) ?? d; } catch { return d; } }, set: (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch { /* 保存できなくても動く */ } } };
@@ -130,8 +130,11 @@ async function main() {
   // ---------- 表示モード ----------
   // exterior: 外観 / xray: 透視（カメラの側の外殻だけ透かす）/ cutaway: 断面（中心線で縦に切る）
   let view = 'exterior', cutSide = 0, follow = true, peel = 'none';
-  // 甲板を外す高さ（船体座標の y）。上部構造 = 甲板室の床の少し上、上甲板 = 居住区の天井の下、第 2 甲板 = 船倉の天井の下
-  const PEEL = { none: 1e3, house: H.deckY(Lo.HOUSE.z1) + 0.15, deck: H.D - 0.35, deck2: Lo.DECK2 - 0.12 };
+  // 甲板を外す高さ（船体座標の y）。上甲板 = 居住区の天井の下、第 2 甲板 = 船倉の天井の下。
+  // 上部構造 = 甲板で最も高い所（船首のそり）の少し上。甲板室の床の高さにすると、そりで高い船首・船尾の甲板まで切れる
+  let deckTop = 0;
+  for (let z = H.Z_MIN; z <= H.Z_MAX; z += 0.1) deckTop = Math.max(deckTop, H.deckY(z));
+  const PEEL = { none: 1e3, house: deckTop + 0.1, deck: H.D - 0.35, deck2: Lo.DECK2 - 0.12 };
   model.cut.clippingPlanes = [new THREE.Plane(), new THREE.Plane()]; // [断面, 甲板を外す]。使わない面は遠くに置く（数を変えると材質を作り直す）
   const setView = (v) => {
     view = v;
@@ -144,6 +147,7 @@ async function main() {
   const labelRenderer = new CSS2DRenderer();
   labelRenderer.setSize(innerWidth, innerHeight);
   labelRenderer.domElement.className = 'labels';
+  labelRenderer.domElement.setAttribute('aria-hidden', 'true'); // 同じ情報は区画図にある（13 個を読み上げさせない）
   $('app').append(labelRenderer.domElement);
   addEventListener('resize', () => labelRenderer.setSize(innerWidth, innerHeight));
   const labels = Lo.ROOMS.map((r, i) => {
@@ -159,7 +163,7 @@ async function main() {
   let labelsOn = true;
   function updateLabels(peelY) {
     for (const l of labels) {
-      const c = l.o.position;
+      const c = l.o.position.set(...roomCenters[l.i]); // 扉の開閉・破断で格子を作り直すと部屋の中心が変わる
       // 断面で切り取った側・外した甲板より上の部屋は出さない
       l.o.visible = labelsOn && view !== 'exterior' && !(cutSide && c.x * cutSide > 0.8) && c.y < peelY;
     }
@@ -284,7 +288,13 @@ async function main() {
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     ray.setFromCamera(ndc, camera);
     // raycast はクリッピングを見ない。断面表示では切り取った手前側（船体座標で x·cutSide > 0）の外板は見えないので飛ばす
-    const local = ray.intersectObjects(model.hullMeshes).map((h) => model.group.worldToLocal(h.point.clone())).find((p) => !cutSide || p.x * cutSide <= 0.01);
+    // 透視でも同じ: 透かしている外板（船外向きの面がカメラを向く）と、外した甲板より上は飛ばして、その奥（見えている外板の内側）を狙う
+    const peelY = view !== 'exterior' ? PEEL[peel] : 1e3;
+    const local = ray.intersectObjects(model.hullMeshes).map((hit) => {
+      const p = model.group.worldToLocal(hit.point.clone());
+      const ghost = view === 'xray' && hit.face && hit.face.normal.dot(tmp.copy(camLocal).sub(p)) > 0;
+      return ghost || p.y > peelY || (cutSide && p.x * cutSide > 0.01) ? null : p;
+    }).find((p) => p);
     if (!local) return;
     launch([local.x, local.y, local.z], local.x >= 0 ? 1 : -1);
   });
@@ -546,7 +556,8 @@ async function main() {
     }
     if (keysDown.size) {
       camera.getWorldDirection(fwd);
-      const d = flyDelta(keysDown, [fwd.x, fwd.y, fwd.z], camera.position.distanceTo(controls.target), real, { fast: shiftDown, fallback: [camera.up.x, camera.up.y, camera.up.z] });
+      const scrUp = tmp2.set(0, 1, 0).applyQuaternion(camera.quaternion); // 画面の上（真下を見ているときの「前」）
+      const d = flyDelta(keysDown, [fwd.x, fwd.y, fwd.z], camera.position.distanceTo(controls.target), real, { fast: shiftDown, fallback: [scrUp.x, scrUp.y, scrUp.z] });
       tmp.set(...d);
       camera.position.add(tmp); controls.target.add(tmp);
     }

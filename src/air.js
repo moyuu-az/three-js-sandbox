@@ -134,7 +134,9 @@ export function equalize(air, groupOf, vAir, pMax = P_MAX) {
   for (let i = 0; i < n; i++) {
     if (vAir[i] === null) { air.pressure[i] = 1; continue; }
     const g = groupOf[i];
-    const p = Math.min(P_MAX, pMax, Math.max(0.05, sumA[g] / sumV[g]));
+    // 空気をまったく持たないまとまり（満水で空気を失った部屋の水位が見積もりの揺れで少し下がった）は真空にせず、1 気圧の
+    // すき間として扱う（本当に密閉した部屋から水が抜けて真空になる経路は、このモデルには無い。真空にすると偽の圧潰が起きる）
+    const p = sumA[g] <= 1e-9 ? 1 : Math.min(P_MAX, pMax, Math.max(0.05, sumA[g] / sumV[g]));
     air.pressure[i] = p;
     air.amount[i] = p * vAir[i];
   }

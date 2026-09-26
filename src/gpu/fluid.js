@@ -198,7 +198,7 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
       If(dot(n, n).greaterThan(0.5), () => { v.subAssign(n.mul(dot(v, n))); }).Else(() => { v.assign(vec3(0)); });
     };
     If(type.equal(NODE_SOLID).or(type.equal(NODE_EXTERIOR)), slip).ElseIf(type.greaterThanEqual(NODE_OPENING_IN), () => {
-      const k = int(type).sub(NODE_OPENING_IN).mod(32); // 開口部の番号（内側・外側とも）
+      const k = int(type).sub(NODE_OPENING_IN).mod(MAX_OPENINGS); // 開口部の番号（内側・外側とも。MAX_OPENINGS = OUT − IN）
       const s = open.state.element(k);
       If(s.w.equal(OPEN_INFLOW), () => { v.assign(s.xyz); }).ElseIf(s.w.equal(OPEN_CLOSED), slip);
     });
