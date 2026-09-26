@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>fluid selftest</title>
+  <style>body{margin:0;background:#0b1620;color:#dfe8ef;font:13px/1.5 ui-monospace,monospace;padding:16px}.ok{color:#7ef0c6}.ng{color:#ff6b6b}pre{white-space:pre-wrap}</style>
+  <script type="importmap">
+    { "imports": {
+      "three": "../node_modules/three/build/three.webgpu.js",
+      "three/webgpu": "../node_modules/three/build/three.webgpu.js",
+      "three/tsl": "../node_modules/three/build/three.tsl.js",
+      "three/addons/": "../node_modules/three/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+<h3>GPU 流体のセルフテスト（実際の船の格子で）</h3>
+<pre id="out">実行中…</pre>
+<script type="module">
+// GPU 流体（src/gpu/fluid.js）を実際の船の格子で動かし、物理的に守るべき性質を確かめる。node では動かせないのでブラウザで実行する
+import * as THREE from 'three/webgpu';
+import * as V from '../src/voxel.js';
+import * as Lo from '../src/layout.js';
+import * as F from '../src/flooding.js';
+import { buildShipGrid, gridSpec, breachAt } from '../src/shipgrid.js';
+import { createFluid, OPEN_INFLOW, OPEN_CLOSED } from '../src/gpu/fluid.js';
+
+const out = document.getElementById('out');
+const log = (s, cls = '') => { out.innerHTML += `<span class="${cls}">${s}</span>\n`; };
+out.textContent = '';
+const results = [];
+const check = (name, ok, detail) => { results.push({ name, ok, detail }); log(`${ok ? 'PASS' : 'FAIL'} ${name} — ${detail}`, ok ? 'ok' : 'ng'); };
+
+const h = 0.3, PPC = 8, spec = gridSpec(h), Vp = h ** 3 / PPC;
+const stiffness = (PPC * 9.81 * 5) / (h * h * 7 * 0.07);
+const dtMax = 0.35 / Math.sqrt((7 * stiffness) / PPC);
+const R = (name) => Lo.ROOMS.findIndex((r) => r.name === name);
+const allClosed = { doors: Object.fromEntries(Lo.DOORS.filter((d) => d.wt).map((d) => [d.id, false])), seaOpenings: Object.fromEntries(Lo.SEA_OPENINGS.map((o) => [o.id, false])) };
+
+const renderer = new THREE.WebGPURenderer({ requiredLimits: { maxStorageBuffersPerShaderStage: 16 } });
+await renderer.init();
+if (!renderer.backend.isWebGPUBackend) { log('WebGPU が使えません', 'ng'); throw new Error('no webgpu'); }
+const device = renderer.backend.device;
+const fluid = createFluid(renderer, { dims: spec.dims, ppc: PPC, maxParticles: 262144, stiffness });
+
+// 部屋 room の下から fraction の高さまで、格子点ごとに PPC 個の粒子を置く（格子座標）
+function fillRoom(grid, room, fraction) {
+  const ys = [];
+  for (let n = 0; n < grid.N; n++) if (grid.type[n] === V.NODE_FLUID && grid.room[n] === room) ys.push(grid.coords(n)[1]);
+  const y0 = Math.min(...ys), y1 = Math.max(...ys), top = y0 + (y1 - y0 + 1) * fraction;
+  const pts = [];
+  for (let n = 0; n < grid.N; n++) {
+    if (grid.type[n] !== V.NODE_FLUID || grid.room[n] !== room) continue;
+    const [i, j, k] = grid.coords(n);
+    if (j >= top) continue;
+    for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) for (let c = 0; c < 2; c++) pts.push(i + 0.25 + a * 0.5, j + 0.25 + b * 0.5, k + 0.25 + c * 0.5);
+  }
+  return pts;
+}
+async function run(sec, { gravity = [0, -9.81, 0], spawns = () => [] } = {}) {
+  const frames = Math.round(sec * 60), nSub = Math.ceil(1 / 60 / dtMax);
+  for (let f = 0; f < frames; f++) {
+    fluid.uniforms.gravity.value.set(...gravity).divideScalar(h);
+    fluid.step(1 / 60 / nSub, nSub, spawns(f));
+    if (f % 30 === 29) await device.queue.onSubmittedWorkDone();
+  }
+  await device.queue.onSubmittedWorkDone();
+}
+async function particles() {
+  const p = new Float32Array(await renderer.getArrayBufferAsync(fluid.buffers.pos.value));
+  const v = new Float32Array(await renderer.getArrayBufferAsync(fluid.buffers.vel.value));
+  const list = [];
+  for (let i = 0; i < p.length / 4; i++) if (p[4 * i + 3] > 0.5) list.push({ x: p[4 * i], y: p[4 * i + 1], z: p[4 * i + 2], s: Math.hypot(v[4 * i], v[4 * i + 1], v[4 * i + 2]) * h });
+  return list;
+}
+const roomOfP = (grid, p) => grid.room[grid.index(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z))];
+const countBy = (grid, ps) => { const c = new Map(); for (const p of ps) { const r = roomOfP(grid, p); c.set(r, (c.get(r) ?? 0) + 1); } return c; };
+const nan = (ps) => ps.some((p) => !Number.isFinite(p.x + p.y + p.z + p.s));
+const t0 = performance.now();
+
+// ---------- 1) 静水: 第1船倉に 40% 入れて静置 → 漏れない・量が保存される・水面が平ら・静かになる ----------
+{
+  const b = buildShipGrid(h, allClosed);
+  fluid.setGrid(V.packForGpu(b.grid));
+  const room = R('第1船倉');
+  const pts = fillRoom(b.grid, room, 0.4);
+  fluid.init(new Float32Array(pts));
+  await run(6);
+  const ps = await particles();
+  const cnt = countBy(b.grid, ps);
+  check('静水: 粒子が消えない', ps.length === pts.length / 3, `${ps.length} / ${pts.length / 3}`);
+  check('静水: 他の部屋に漏れない', [...cnt.keys()].every((r) => r === room || r === V.NO_ROOM) && (cnt.get(V.NO_ROOM) ?? 0) < ps.length * 0.02, JSON.stringify([...cnt]));
+  check('静水: NaN が無い', !nan(ps), '');
+  const ys = ps.map((p) => p.y).sort((a, b) => a - b);
+  const top = ys[Math.floor(ys.length * 0.995)], mean = ps.reduce((s, p) => s + p.s, 0) / ps.length;
+  const level = (F.waterLevel(F.roomNodes(b.grid, Lo.ROOMS.length)[room], h, ps.length * Vp, [0, 1, 0]) - spec.origin[1]) / h; // 格子座標
+  check('静水: 水面の高さが水量に見合う（圧縮 10% 以内）', top < level + 1.0 && top > level - (level - 3) * 0.12 - 1.0, `上端 ${top.toFixed(2)} / 期待 ${level.toFixed(2)}（格子単位）`);
+  check('静水: 静まる（平均流速 < 0.15 m/s）', mean < 0.15, `平均 ${mean.toFixed(3)} m/s`);
+  // 水面の平らさ: 上から 3% の粒子の高さの幅
+  const surf = ys.slice(Math.floor(ys.length * 0.97));
+  check('静水: 水面が平ら（上端のばらつき < 1.5 セル）', surf.at(-1) - surf[0] < 1.5, `${(surf.at(-1) - surf[0]).toFixed(2)} セル`);
+}
+
+// ---------- 2) 水密: 第2船倉を 70% にして 25° 傾けた重力で隔壁に押し付ける → 隣へ漏れない ----------
+{
+  const b = buildShipGrid(h, allClosed);
+  fluid.setGrid(V.packForGpu(b.grid));
+  const room = R('第2船倉');
+  const pts = fillRoom(b.grid, room, 0.7);
+  fluid.init(new Float32Array(pts));
+  const a = 25 * Math.PI / 180;
+  await run(4, { gravity: [0, -9.81 * Math.cos(a), 9.81 * Math.sin(a)] });
+  await run(4, { gravity: [0, -9.81 * Math.cos(a), -9.81 * Math.sin(a)] });
+  const ps = await particles();
+  const cnt = countBy(b.grid, ps);
+  const leaked = [...cnt].filter(([r]) => r !== room && r !== V.NO_ROOM).reduce((s, [, n]) => s + n, 0);
+  check('水密: 傾けても隣の区画に漏れない', leaked === 0, JSON.stringify([...cnt]));
+  check('水密: 粒子が消えない', ps.length === pts.length / 3, `${ps.length} / ${pts.length / 3}`);
+}
+
+// ---------- 3) 扉: 機関室に水、D3（機関室↔操舵機室）を開ける → 両室の水位がそろう ----------
+{
+  const b = buildShipGrid(h, { ...allClosed, doors: { ...allClosed.doors, D3: true } });
+  fluid.setGrid(V.packForGpu(b.grid));
+  const er = R('機関室'), sg = R('操舵機室');
+  fluid.init(new Float32Array(fillRoom(b.grid, er, 0.28)));
+  await run(25);
+  const ps = await particles();
+  const top = (r) => { const ys = ps.filter((p) => roomOfP(b.grid, p) === r).map((p) => p.y).sort((a, c) => a - c); return ys.length ? ys[Math.floor(ys.length * 0.98)] : NaN; };
+  const d = Math.abs(top(er) - top(sg)) * h;
+  check('扉: 開いた水密扉を通って隣室へ流れ、水位がそろう（差 < 0.3 m）', d < 0.3, `機関室 ${(top(er) * h).toFixed(2)} / 操舵機室 ${(top(sg) * h).toFixed(2)}（格子の y、m）`);
+}
+
+// ---------- 4) 流入: 空の船に破口 → 生成した分だけ粒子が増え、破口の部屋に溜まる ----------
+{
+  const bb = breachAt(3.5, 1.6, 7.8, 1.6, 1.2);
+  const b = buildShipGrid(h, { ...allClosed, breaches: [bb] });
+  fluid.setGrid(V.packForGpu(b.grid));
+  fluid.init(new Float32Array(0));
+  const o = b.openings[0];
+  const toG = (p) => [(p[0] - spec.origin[0]) / h, (p[1] - spec.origin[1]) / h, (p[2] - spec.origin[2]) / h];
+  const vel = o.normal.map((c) => (-c * 4) / h);
+  fluid.setOpening(0, { mode: OPEN_INFLOW, inflow: vel, center: toG(o.spawn.center), ax: o.spawn.ax.map((c) => c / h), ay: o.spawn.ay.map((c) => c / h), spawnVel: vel });
+  let spawned = 0;
+  await run(8, { spawns: () => { spawned += 60; return [{ opening: 0, count: 60 }]; } });
+  fluid.setOpening(0, { mode: OPEN_CLOSED });
+  await run(2);
+  const ps = await particles();
+  const cnt = countBy(b.grid, ps);
+  const st = fluid.stats;
+  check('流入: 生成した数 = 生きている粒子 + 船外へ出た粒子', ps.length + (st?.killed ?? 0) === spawned, `生成 ${spawned}, 生存 ${ps.length}, 船外 ${st?.killed}`);
+  check('流入: 船外へ出たのは 2% 未満（噴流が船内に入る）', (st?.killed ?? 0) < spawned * 0.02, `${st?.killed}`);
+  check('流入: 破口の部屋に溜まる', (cnt.get(o.room) ?? 0) > ps.length * 0.95, JSON.stringify([...cnt]));
+}
+
+log(`\n所要 ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+window.results = results;
+window.done = true;
+</script>
+</body>
+</html>
