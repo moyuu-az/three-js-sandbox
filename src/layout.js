@@ -84,6 +84,9 @@ export const SEA_OPENINGS = [
   { id: 'o3', name: '甲板室 左舷扉', kind: 'door', open: true, center: [HOUSE.hw, deckY(-7) + 1.3, -7], normal: [1, 0, 0], u: [0, 0, 1], v: [0, 1, 0], half: [0.45, 1.0] },
   { id: 'o4', name: '甲板室 右舷扉', kind: 'door', open: true, center: [-HOUSE.hw, deckY(-7) + 1.3, -7], normal: [-1, 0, 0], u: [0, 0, 1], v: [0, 1, 0], half: [0.45, 1.0] },
   { id: 'o5', name: '甲板室 前面扉', kind: 'door', open: true, center: [0, deckY(HOUSE.z1) + 1.3, HOUSE.z1], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0], half: [0.45, 1.0] },
+  // 通風筒（甲板上のきのこ形の筒の下の開口）。沈んで船尾が立ったとき、最後に機関室・操舵機室へ水が入る経路
+  { id: 'o6', name: '機関室 通風筒', kind: 'vent', open: true, center: [3.05, deckY(-6.2), -6.2], normal: [0, 1, 0], u: [1, 0, 0], v: [0, 0, 1], half: [0.25, 0.25] },
+  { id: 'o7', name: '操舵機室 通風筒', kind: 'vent', open: true, center: [1.5, deckY(-13.8), -13.8], normal: [0, 1, 0], u: [1, 0, 0], v: [0, 0, 1], half: [0.25, 0.25] },
 ];
 
 // 'deck' / 'deck+Δ' を z での高さに解決する

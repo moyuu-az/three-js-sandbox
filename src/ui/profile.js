@@ -61,7 +61,7 @@ export function createProfile(svg, { onDoor }) {
   for (const d of Lo.DOORS.filter((x) => x.wt)) addDoor(d.id, (d.box.z[0] + d.box.z[1]) / 2, Lo.resolveY(d.box.y[0], 0), Lo.resolveY(d.box.y[1], 0), d.name);
   for (const o of Lo.SEA_OPENINGS) {
     const z = o.center[2], y = o.center[1];
-    if (o.kind === 'hatch') addDoor(o.id, z, y - 0.15, y + 0.35, o.name);
+    if (o.kind === 'hatch' || o.kind === 'vent') addDoor(o.id, z, y - 0.15, y + 0.35, o.name);
     else addDoor(o.id, o.id === 'o5' ? z : z + (o.center[0] > 0 ? 0.35 : -0.35), y - o.half[1], y + o.half[1], o.name);
   }
   const breachLayer = el('g', {}, g);

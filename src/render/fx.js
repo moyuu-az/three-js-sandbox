@@ -14,7 +14,7 @@ const LOOK = [
   [1, 1, 1, 0.5, 0.35, 3],
   [0.95, 0.97, 1, 0.75, 0.6, 5],
   [0.35, 0.35, 0.37, 0.28, 1.2, 9],
-  [0.9, 0.93, 0.96, 0.25, 2.5, 3],
+  [0.9, 0.93, 0.96, 0.18, 2.0, 2.5],
 ];
 
 export function createFx(scene, sim, shipGroup, max = 40000) {
@@ -54,7 +54,19 @@ export function createFx(scene, sim, shipGroup, max = 40000) {
   }
 
   // under: カメラが水中。海面の泡は下から見ると明るすぎるので薄くする
-  function update(dt, { under = false, wind = [1.2, 0, 0.4] } = {}) {
+  // cut: 断面表示で手前の海面を切り取っている範囲 { side, inv（ワールド → 船体座標）, x, z }。そこでは海面の泡を描かない
+  // （海面が無いので泡だけ宙に浮いて見える）
+  const lp = new THREE.Vector3();
+  const inCut = (cut, x, y, z) => {
+    if (!cut || !cut.side) return false;
+    lp.set(x, y, z).applyMatrix4(cut.inv);
+    return lp.x * cut.side > -0.5 && lp.x * cut.side < cut.x && Math.abs(lp.z) < cut.z;
+  };
+  // 船体の内側（船体座標で外殻の中）に入った煙・しぶきは描かない。断面表示で船内に爆発の煙が漂って見えるのを防ぐ
+  const shipInv = new THREE.Matrix4();
+  const inHull = (x, y, z) => { lp.set(x, y, z).applyMatrix4(shipInv); return H.inside(lp.x, lp.y, lp.z); };
+  function update(dt, { under = false, wind = [1.2, 0, 0.4], cut = null } = {}) {
+    shipInv.copy(shipGroup.matrixWorld).invert();
     if (dt <= 0) { aPos.needsUpdate = aCol.needsUpdate = aSize.needsUpdate = true; return; }
     const surfA = under ? 0.25 : 1;
     for (let i = 0; i < count;) {
@@ -66,22 +78,24 @@ export function createFx(scene, sim, shipGroup, max = 40000) {
         vel[k + 1] -= 9.81 * dt;
         const d = Math.exp(-(t === P.PLUME ? 0.5 : 0.2) * dt); vel[k] *= d; vel[k + 2] *= d;
         if (t === P.PLUME) size[i] += 0.5 * dt;
+        col[4 * i + 3] = inHull(pos[k], pos[k + 1], pos[k + 2]) ? 0 : base[i];
         if (pos[k + 1] < sea && vel[k + 1] < 0) { dead = true; if (Math.random() < 0.15) emit(P.SEA_FOAM, pos[k], sea + 0.03, pos[k + 2], rnd(0.4), 0, rnd(0.4), 0.6); }
       } else if (t === P.BUBBLE) { // 気泡: 浮力で上がり、揺れながら海面へ。水圧が下がって膨らむ
         vel[k + 1] += (1.4 - vel[k + 1]) * 3 * dt;
         vel[k] += rnd(2.5) * dt; vel[k + 2] += rnd(2.5) * dt;
         size[i] = Math.min(0.25, size[i] + 0.006 * dt);
+        if (inHull(pos[k], pos[k + 1], pos[k + 2])) dead = true; // 船内の水は GPU 流体が描く
         if (pos[k + 1] > sea) { dead = true; if (Math.random() < 0.4) emit(P.SEA_FOAM, pos[k], sea + 0.03, pos[k + 2], rnd(0.3), 0, rnd(0.3), 0.5); if (Math.random() < 0.15) emit(P.SPLASH, pos[k], sea, pos[k + 2], rnd(0.4), 1 + Math.random(), rnd(0.4), 0.6); }
       } else if (t === P.SEA_FOAM || t === P.WAKE) { // 海面の泡: 海面に乗って広がりながら消える
         const d = Math.exp(-0.8 * dt); vel[k] *= d; vel[k + 2] *= d;
         pos[k + 1] = sea + 0.04;
         size[i] += (t === P.WAKE ? 0.12 : 0.18) * dt;
-        col[4 * i + 3] = base[i] * Math.min(1, life[i] / 2.5) * surfA;
+        col[4 * i + 3] = inCut(cut, pos[k], pos[k + 1], pos[k + 2]) ? 0 : base[i] * Math.min(1, life[i] / 2.5) * surfA;
       } else if (t === P.SMOKE || t === P.MIST) { // 煙: 上昇しながら風に流され、広がって薄くなる
         vel[k] += (wind[0] - vel[k]) * 0.4 * dt; vel[k + 2] += (wind[2] - vel[k + 2]) * 0.4 * dt;
-        vel[k + 1] += ((t === P.SMOKE ? 0.9 : 0.1) - vel[k + 1]) * 0.5 * dt;
+        vel[k + 1] += ((t === P.SMOKE ? 2.2 : 0.1) - vel[k + 1]) * 0.5 * dt;
         size[i] += (t === P.SMOKE ? 0.5 : 1.0) * dt;
-        col[4 * i + 3] = base[i] * Math.min(1, life[i] / 3);
+        col[4 * i + 3] = inHull(pos[k], pos[k + 1], pos[k + 2]) ? 0 : base[i] * Math.min(1, life[i] / 3);
       }
       if (dead) { kill(i); continue; }
       pos[k] += vel[k] * dt; pos[k + 1] += vel[k + 1] * dt; pos[k + 2] += vel[k + 2] * dt;
@@ -103,7 +117,8 @@ export function createFx(scene, sim, shipGroup, max = 40000) {
       let n = (debt.get(o) ?? 0) + Math.min(400, 20 + 120 * f.q) * dt;
       for (; n >= 1; n--) {
         const r = Math.sqrt(o.area) * 0.6;
-        if (w[1] < sea - 0.3) emit(P.BUBBLE, w[0] + nW.x * 0.4 + rnd(r), w[1] + rnd(r), w[2] + nW.z * 0.4 + rnd(r), rnd(0.3), 0.2, rnd(0.3));
+        // 生成位置（spawn.center）は船内側なので、外板の外（外向きに 1.2 m）に出す
+        if (w[1] < sea - 0.3) emit(P.BUBBLE, w[0] + nW.x * 1.2 + rnd(r), w[1] + nW.y * 1.2 + rnd(r), w[2] + nW.z * 1.2 + rnd(r), nW.x * 0.5 + rnd(0.3), 0.2, nW.z * 0.5 + rnd(0.3));
         // 浅い破口: 吸い込みで海面が乱れる
         if (sea - w[1] < 3 && Math.random() < 0.3) emit(P.SEA_FOAM, w[0] + nW.x * 1.0 + rnd(1.2), sea + 0.04, w[2] + nW.z * 1.0 + rnd(1.2), -nW.x * 0.6, 0, -nW.z * 0.6, 0.5);
       }
@@ -136,11 +151,11 @@ export function createFx(scene, sim, shipGroup, max = 40000) {
     }
     for (let n = 0; n < 600; n++) emit(P.SEA_FOAM, p.x + rnd(4), 0, p.z + rnd(4), rnd(3), 0, rnd(3));
     for (let n = 0; n < 800; n++) emit(P.BUBBLE, p.x + rnd(1), p.y + rnd(1), p.z + rnd(1), rnd(2), rnd(2), rnd(2));
-    for (let n = 0; n < 200; n++) emit(P.MIST, p.x + rnd(2), 1 + Math.random() * 6, p.z + rnd(2), rnd(1.5), 1 + Math.random() * 2, rnd(1.5));
+    for (let n = 0; n < 60; n++) emit(P.MIST, p.x + rnd(2), 1 + Math.random() * 6, p.z + rnd(2), rnd(1.5), 1 + Math.random() * 2, rnd(1.5));
     for (let n = 0; n < 60; n++) emit(P.SMOKE, p.x + rnd(1), 2 + Math.random() * 3, p.z + rnd(1), rnd(1), 1.5 + Math.random(), rnd(1));
   }
 
-  return { emit, update, emitOpenings, emitWaterline, explosion, get count() { return count; } };
+  return { sprite, emit, update, emitOpenings, emitWaterline, explosion, get count() { return count; } };
 }
 
 // 魚雷（航走中だけ見える）

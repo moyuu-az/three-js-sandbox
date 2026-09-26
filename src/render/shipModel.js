@@ -1,7 +1,7 @@
 // 船の 3D モデル。船体は hull.js、船内配置は layout.js から作る（どちらも物理・流体格子と共通の SSOT）。
 // 隔壁・甲板・壁は流体格子の板と同じ位置（snapPlane）に置き、水が壁にめり込んで見えないようにする。
 import * as THREE from 'three/webgpu';
-import { texture, uv, frontFacing, select, vec3, color, float, positionLocal, mix, smoothstep } from 'three/tsl';
+import { texture, uv, frontFacing, select, vec2, vec3, color, float, positionLocal, mix, smoothstep } from 'three/tsl';
 import * as H from '../hull.js';
 import * as Lo from '../layout.js';
 import { snapPlane } from '../shipgrid.js';
@@ -15,7 +15,7 @@ const T_DECK = 0.08;
 // 表は模様、裏（断面表示で見える切り口や外板の内側）は単色にする材質
 function mat({ map = null, tint = '#ffffff', back = '#5d6368', roughness = 0.7, metalness = 0.1, bumpMap = null, bumpScale = 1, roughnessMap = null, repeat = null, emissive = null, transparent = false }) {
   const m = new THREE.MeshStandardNodeMaterial({ roughness, metalness, side: THREE.DoubleSide, transparent });
-  const base = map ? texture(map, repeat ? uv().mul(repeat) : uv()).rgb.mul(color(tint)) : color(tint);
+  const base = map ? texture(map, repeat ? uv().mul(vec2(...repeat)) : uv()).rgb.mul(color(tint)) : color(tint);
   m.colorNode = select(frontFacing, base, color(back));
   if (bumpMap) { m.bumpMap = bumpMap; m.bumpScale = bumpScale; }
   if (roughnessMap) m.roughnessMap = roughnessMap;
@@ -415,7 +415,8 @@ export function buildShipModel({ h, draft }) {
     B.add(M.dark, box(0.3, 0.06, 0.7, x, y + 0.03, z));
   }
   // 通風筒（マッシュルーム型）
-  for (const [x, z] of [[2.4, 1.0], [-2.4, 1.0], [2.4, -2.5], [-2.4, 11.8], [1.5, -13.8]]) {
+  // 通風筒（layout の vent の位置にも置く。沈んだときの浸水経路）
+  for (const [x, z] of [[2.4, 1.0], [-2.4, 1.0], [2.4, -2.5], [-2.4, 11.8], ...Lo.SEA_OPENINGS.filter((o) => o.kind === 'vent').map((o) => [o.center[0], o.center[2]])]) {
     const y = H.deckY(z);
     B.add(M.white, new THREE.CylinderGeometry(0.16, 0.16, 0.9, 14).translate(x, y + 0.45, z));
     B.add(M.white, new THREE.CylinderGeometry(0.3, 0.3, 0.15, 16).translate(x, y + 0.95, z));

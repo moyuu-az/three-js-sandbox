@@ -73,7 +73,7 @@ export function createOcean(scene, { sunDir }) {
     return inRange.and(abs(p.x).lessThan(hb.sub(0.03)));
   };
   // 断面表示で切り取る範囲（船の手前側の箱）
-  const CUT_BOX = { x: H.B / 2 + 9, z: H.L / 2 + 6 };
+  const CUT_BOX = { x: 80, z: H.L / 2 + 6 }; // 手前側は広く切る（狭いと、低い位置のカメラから見て手前の海面が船の水面下を隠す）
   const inCutBox = (p) => u.cutSide.notEqual(0).and(p.x.mul(u.cutSide).greaterThan(-0.02)).and(p.x.mul(u.cutSide).lessThan(CUT_BOX.x)).and(abs(p.z).lessThan(CUT_BOX.z));
 
   const ripple = rippleNormalMap(512);
@@ -155,5 +155,5 @@ export function createOcean(scene, { sunDir }) {
     section.scale.x = cutSide || 1;
   }
 
-  return { near, far, section, uniforms: u, setWaves, update };
+  return { near, far, section, uniforms: u, setWaves, update, cutBox: CUT_BOX };
 }

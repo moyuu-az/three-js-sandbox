@@ -28,6 +28,7 @@ const QUALITY = {
   high: { h: 0.25, max: 393216, subCap: 6 },
 };
 const PPC = 8; // 1 セルあたりの粒子数（静止時）
+const BOTTOM_PROBES = [[0, 0, 0], [0, H.keelY(H.Z_MAX), H.Z_MAX], [0, H.keelY(H.Z_MIN), H.Z_MIN], [0, H.deckY(H.Z_MAX), H.Z_MAX], [0, H.deckY(H.Z_MIN), H.Z_MIN], [H.B / 2, H.D, 0], [-H.B / 2, H.D, 0], [0, Lo.HOUSE.top, -8]];
 const MAX_SUBSTEPS = 10; // 1 フレームの流体サブステップの上限（GPU の負荷の上限。超えるとスロー再生になる）
 
 const $ = (id) => document.getElementById(id);
@@ -269,7 +270,7 @@ async function main() {
   const up = [0, 1, 0], upV = new THREE.Vector3();
   const levels = new Array(Lo.ROOMS.length).fill(-Infinity);
   const scratch = new Float32Array(Math.max(...roomNodes.map((a) => a.length / 3)) + 16);
-  const camLocal = new THREE.Vector3(), tmp = new THREE.Vector3(), q = new THREE.Quaternion();
+  const camLocal = new THREE.Vector3(), tmp = new THREE.Vector3(), q = new THREE.Quaternion(), shipInv = new THREE.Matrix4();
   const mp = RHO * particleVolume; // 粒子 1 個の質量 [kg]
 
   let lastFrameAt = 0;
@@ -345,7 +346,7 @@ async function main() {
     const ft = model.funnelTop.getWorldPosition(tmp);
     if (ft.y > sim.sea(ft.x, ft.z) + 0.5) for (smokeDebt += 14 * dt; smokeDebt >= 1; smokeDebt--) fx.emit(P.SMOKE, ft.x, ft.y, ft.z, 0, 1.2, 0, 0.8);
     const under = camera.position.y < sim.sea(camera.position.x, camera.position.z);
-    fx.update(dt, { under });
+    fx.update(dt, { under, cut: cutSide ? { side: cutSide, inv: shipInv.copy(model.group.matrixWorld).invert(), x: ocean.cutBox.x, z: ocean.cutBox.z } : null });
     stage.setUnderwater(under);
     stage.time.value = simTime;
 
@@ -377,7 +378,7 @@ async function main() {
     }
     controls.update();
 
-    fluidView.render(camera, model.group.matrixWorld, { cutSide, sunDir });
+    fluidView.render(camera, model.group.matrixWorld, { cutSide, sunDir, under });
     pipeline.render();
 
     uiTimer += real;
@@ -404,8 +405,9 @@ async function main() {
     chart.draw();
 
     // 状態の判定と通知
-    const keel = new THREE.Vector3(0, 0, 0).applyMatrix4(model.group.matrixWorld);
-    const onBottom = keel.y < SEABED_Y + 3 || s.y < SEABED_Y + 2;
+    // 着底: 船体の端（船首・船尾・船底・甲板の角）の最も低い点が海底に届いたか。傾いて沈むと船体中央は海底から遠い
+    const lowest = Math.min(...BOTTOM_PROBES.map((p) => tmp.set(...p).applyMatrix4(model.group.matrixWorld).y));
+    const onBottom = lowest < SEABED_Y + 1.0;
     let status = 'ok', label = '航行中';
     if (onBottom) { status = 'warn'; label = '着底'; }
     else if (s.submerged > 0.97) { status = 'danger'; label = '沈没中'; }
@@ -450,7 +452,7 @@ async function main() {
 
   // 検証用（ブラウザのコンソールから、描画を待たずに進める）
   window.__app = {
-    sim, fluid, model, gridState, launch, setDoor,
+    sim, fluid, model, gridState, launch, setDoor, camera, controls, fluidView, fx, ocean, scene, setFollow: (v) => { follow = v; },
     advance: async (n = 60) => { for (let i = 0; i < n; i++) { frame(performance.now(), 1 / 60); await renderer.backend.device.queue.onSubmittedWorkDone(); } return sim.state(); },
     get flows() { return flows; }, get openings() { return built.openings; },
   };

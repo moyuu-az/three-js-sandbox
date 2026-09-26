@@ -23,6 +23,7 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
     speedScale: uniform(1 / 4), // 粒子表示の色: この速さ [m/s] で最も明るい色
     projX: uniform(1), projY: uniform(1), // 射影行列の対角成分（深度から視点空間の位置を戻す）
     surfaceOn: uniform(1), // 0 なら合成しない（粒子表示のとき）
+    underwater: uniform(0), // カメラが水中: 船内の水は周りの海水と見分けがつかないので、反射と泡を消して薄く重ねる
   };
   // 粒子の格子座標 → 船体座標のアンカー（毎フレーム、船の行列 × 平行移動 × 拡大 を入れる）
   const anchor = new THREE.Object3D(); // 深度・厚みのパス用
@@ -107,8 +108,8 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
     const m = new THREE.NodeMaterial();
     m.fragmentNode = Fn(() => {
       const c = src.sample(screenUV).r.toVar();
-      // 粒子半径の 1.6 倍の幅を画面上の画素数に直し、R 段で割った間隔でサンプルする
-      const px = clamp(u.radius.mul(1.6).mul(u.focal).div(max(c, 0.01)).div(R), 0.35, 3.0);
+      // 粒子半径の 2.4 倍の幅を画面上の画素数に直し、R 段で割った間隔でサンプルする（粒子の粒々が見えない程度）
+      const px = clamp(u.radius.mul(2.4).mul(u.focal).div(max(c, 0.01)).div(R), 0.35, 4.0);
       const sum = float(0).toVar(), wsum = float(0).toVar();
       const sigD = u.radius.mul(2.5);
       const stepUV = vec2(dir[0], dir[1]).mul(u.texel).mul(px);
@@ -123,7 +124,7 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
     })();
     return new THREE.QuadMesh(m);
   };
-  const blurPasses = [[makeBlur(rtDepth, [1, 0]), rtA], [makeBlur(rtA, [0, 1]), rtB], [makeBlur(rtB, [1, 0]), rtA], [makeBlur(rtA, [0, 1]), rtB]];
+  const blurPasses = [[makeBlur(rtDepth, [1, 0]), rtA], [makeBlur(rtA, [0, 1]), rtB], [makeBlur(rtB, [1, 0]), rtA], [makeBlur(rtA, [0, 1]), rtB], [makeBlur(rtB, [1, 0]), rtA], [makeBlur(rtA, [0, 1]), rtB]];
 
   function resize(w, hh, dpr) {
     const W = Math.floor(w * dpr), Hh = Math.floor(hh * dpr);
@@ -135,7 +136,8 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
   const tmpM = new THREE.Matrix4(), clear = new THREE.Color();
   let mode = 'surface';
   // 船の行列を反映して、深度・厚み・ぼかしを描く（本体の描画の前に呼ぶ）
-  function render(camera, shipMatrix, { cutSide = 0, sunDir }) {
+  function render(camera, shipMatrix, { cutSide = 0, sunDir, under = false }) {
+    u.underwater.value = under ? 1 : 0;
     for (const a of [anchor, mainAnchor]) { a.matrix.multiplyMatrices(shipMatrix, anchorLocal); a.matrixWorld.copy(a.matrix); }
     u.projX.value = camera.projectionMatrix.elements[0];
     u.projY.value = camera.projectionMatrix.elements[5];
@@ -187,8 +189,8 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
       // 屈折: 法線で背景をずらす（厚いほど大きく）
       const refr = sceneColor.sample(screenUV.add(n.xy.mul(0.025).mul(clamp(thickness, 0, 1.5)))).rgb;
       // 吸収（Beer–Lambert）と散乱: 海水は赤から先に消える
-      const trans = exp(vec3(0.45, 0.11, 0.08).mul(thickness).mul(-1.4));
-      const body = refr.mul(trans).add(vec3(0.02, 0.12, 0.14).mul(float(1).sub(trans)));
+      const trans = exp(vec3(0.55, 0.16, 0.11).mul(thickness).mul(-2.2));
+      const body = refr.mul(trans).add(vec3(0.015, 0.09, 0.11).mul(float(1).sub(trans)));
       // 反射: 環境（空）と太陽の鏡面反射。フレネル（シュリック近似、F0 = 0.02）
       const fres = float(0.02).add(pow(float(1).sub(clamp(dot(n, V), 0, 1)), 5).mul(0.98));
       const nW = cameraWorldMatrix.mul(vec4(n, 0)).xyz;
@@ -196,10 +198,11 @@ export function createFluidRenderer(renderer, fluid, { h, origin, ppc }) {
       const env = pmremTexture(envMap, reflect(vW, nW), float(0.05)).rgb.mul(0.6);
       const Hh = normalize(u.sunDirView.add(V));
       const spec = pow(clamp(dot(n, Hh), 0, 1), 400).mul(6);
-      const col = mix(body, env, fres).add(spec).toVar();
-      col.assign(mix(col, vec3(0.9, 0.95, 0.97), foam));
-      // 縁（粒子が少ない所）は背景に溶かす
-      const edge = smoothstep(0.02, 0.12, thickness);
+      const air = float(1).sub(u.underwater);
+      const col = mix(body, env, fres.mul(air)).add(spec.mul(air)).toVar();
+      col.assign(mix(col, vec3(0.9, 0.95, 0.97), foam.mul(air)));
+      // 縁（粒子が少ない所）は背景に溶かす。水中では薄く重ねるだけ
+      const edge = smoothstep(0.02, 0.12, thickness).mul(mix(float(1), float(0.45), u.underwater));
       return select(isWater, vec4(mix(base.rgb, col, edge), 1), base);
     })();
   }

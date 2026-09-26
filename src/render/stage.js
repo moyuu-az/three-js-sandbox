@@ -98,7 +98,7 @@ export async function createStage(container, { seabedY, allowWebGL = false }) {
 
   // ---------- 霧（空気中はうっすら、水中は濃い青） ----------
   const airFog = new THREE.FogExp2(0xbfd3e0, 0.0011);
-  const waterFog = new THREE.FogExp2(0x0b3c4f, 0.045);
+  const waterFog = new THREE.FogExp2(0x0e4a5e, 0.022); // 水中の見通しは 40 m 程度（船の全長が見える）
   scene.fog = airFog;
   function setUnderwater(under) {
     scene.fog = under ? waterFog : airFog;
