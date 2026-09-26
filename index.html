@@ -22,7 +22,7 @@
 
   <header class="topbar glass">
     <div class="brand">
-      <svg viewBox="0 0 24 24" class="logo"><path d="M3 15h18l-2.5 4.5H5.5z" /><path d="M7 15V9h6v6M13 11h4v4" /><path d="M9 9V6h2v3" /></svg>
+      <svg viewBox="0 0 24 24" class="logo" aria-hidden="true"><path d="M3 15h18l-2.5 4.5H5.5z" /><path d="M7 15V9h6v6M13 11h4v4" /><path d="M9 9V6h2v3" /></svg>
       <div>
         <div class="title">KAIYO MARU <span class="muted">浸水シミュレータ</span></div>
         <div class="sub">全長 30 m・5 水密区画・GPU 流体（MLS-MPM）</div>
@@ -30,13 +30,13 @@
     </div>
     <div class="clock"><span id="clock">00:00.0</span><span id="status" class="badge ok">航行中</span></div>
     <div class="timectl seg" id="speed">
-      <button data-speed="0" title="一時停止">❚❚</button>
+      <button data-speed="0" title="一時停止" aria-label="一時停止">❚❚</button>
       <button data-speed="1" class="on">×1</button>
       <button data-speed="2">×2</button>
       <button data-speed="4">×4</button>
     </div>
     <button class="btn ghost" id="reset" title="最初からやり直す">⟲ リセット</button>
-    <button class="btn ghost icon" id="helpBtn" title="操作説明">?</button>
+    <button class="btn ghost icon" id="helpBtn" title="操作説明" aria-label="操作説明">?</button>
   </header>
 
   <aside class="panel left glass" id="leftPanel">
@@ -88,7 +88,7 @@
       </div>
       <label class="check"><input type="checkbox" id="follow" checked /> 船を追いかける</label>
       <div class="group-title">画質（GPU 負荷）</div>
-      <select id="quality">
+      <select id="quality" aria-label="画質（GPU 負荷）">
         <option value="light">軽量（粒子 13 万）</option>
         <option value="standard">標準（粒子 26 万）</option>
         <option value="high">高精細（粒子 39 万）</option>
@@ -114,7 +114,7 @@
       <div class="metric"><span>予備浮力</span><b id="mReserve">-</b></div>
     </div>
     <div class="reserve"><i id="reserveBar"></i></div>
-    <canvas id="chart" width="560" height="220"></canvas>
+    <canvas id="chart" width="560" height="220" role="img" aria-label="横傾斜・トリム・浸水量の推移"></canvas>
     <div class="chart-legend"><span class="c1">横傾斜</span><span class="c2">トリム</span><span class="c3">浸水量</span></div>
     <div class="perf" id="perf"></div>
   </aside>
@@ -124,7 +124,7 @@
       <div class="group-title">区画の浸水状況</div>
       <div class="legend"><span class="sw water"></span>水 <span class="sw door"></span>水密扉（クリックで開閉） <span class="sw breach"></span>破口</div>
     </div>
-    <svg id="profile" preserveAspectRatio="xMidYMid meet"></svg>
+    <svg id="profile" preserveAspectRatio="xMidYMid meet" aria-label="区画の浸水状況（側面図）"></svg>
   </section>
 
   <div id="toasts"></div>
