@@ -81,7 +81,10 @@ export async function createStage(container, { seabedY, allowWebGL = false }) {
   const ca = abs(sin(positionWorld.x.mul(0.9).add(sin(positionWorld.z.mul(0.7).add(time.mul(0.8))).mul(1.6)).add(time)));
   const cb = abs(sin(positionWorld.z.mul(1.1).add(sin(positionWorld.x.mul(0.6).sub(time.mul(0.6))).mul(1.4)).sub(time.mul(0.9))));
   bedMat.emissiveNode = vec3(0.35, 0.55, 0.5).mul(float(1).sub(ca).mul(float(1).sub(cb)).pow(6).mul(0.9));
-  const bed = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200).rotateX(-Math.PI / 2), bedMat);
+  const bedGeo = new THREE.PlaneGeometry(1200, 1200).rotateX(-Math.PI / 2);
+  // bumpMap は uv() で引くので、色（buv = world xz × 0.08）と同じ座標を uv に入れる（既定の 0..1 だと 1200 m に 1 枚引き伸ばされ、砂紋の凹凸が色とずれて消える）
+  for (let i = 0, p = bedGeo.attributes.position, t = bedGeo.attributes.uv; i < p.count; i++) t.setXY(i, p.getX(i) * 0.08, p.getZ(i) * 0.08);
+  const bed = new THREE.Mesh(bedGeo, bedMat);
   bed.position.y = seabedY;
   bed.receiveShadow = true;
   scene.add(bed);
