@@ -77,7 +77,8 @@ export function createOcean(scene, { sunDir }) {
   const inCutBox = (p) => u.cutSide.notEqual(0).and(p.x.mul(u.cutSide).greaterThan(-0.02)).and(p.x.mul(u.cutSide).lessThan(CUT_BOX.x)).and(abs(p.z).lessThan(CUT_BOX.z));
 
   const ripple = rippleNormalMap(512);
-  function makeSurface(size, segs, fadeStart, fadeEnd) {
+  // hole: メッシュの中心からこの半幅の正方形の中は描かない（遠景で、近景と重なる範囲を抜く）
+  function makeSurface(size, segs, fadeStart, fadeEnd, hole = 0) {
     const geo = new THREE.PlaneGeometry(size, size, segs, segs).rotateX(-Math.PI / 2);
     const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.04, metalness: 0, side: THREE.DoubleSide, ior: 1.333 });
     const p0 = positionLocal.xz.add(u.center);
@@ -101,7 +102,9 @@ export function createOcean(scene, { sunDir }) {
     // 船体の中・断面表示で切る範囲には描かない（不透明材質でも確実に効くよう色の計算の中で捨てる）
     m.colorNode = Fn(() => {
       const pl = u.shipInv.mul(vec4(positionWorld, 1)).xyz;
-      Discard(insideHull(pl).or(inCutBox(pl)));
+      let cull = insideHull(pl).or(inCutBox(pl));
+      if (hole > 0) { const d = abs(positionWorld.xz.sub(u.center)); cull = cull.or(max(d.x, d.y).lessThan(hole)); }
+      Discard(cull);
       return mix(scatter, vec3(0.92, 0.95, 0.97), foam);
     })();
     m.roughnessNode = mix(float(0.03), float(0.6), foam);
@@ -114,8 +117,11 @@ export function createOcean(scene, { sunDir }) {
     return mesh;
   }
   const near = makeSurface(420, 700, 120, 200);
-  const far = makeSurface(6000, 160, 0, 0.001); // 遠景は平ら（格子が粗く波を描くと揺らいで見える）。細かい波は法線だけ
-  far.position.y = -0.05; // 近景と重なる所は近景を優先
+  // 遠景は平ら（格子が粗く波を描くと揺らいで見える）。細かい波は法線だけ。
+  // 近景と重なる範囲は抜く: 平らな遠景（y = −0.05）が近景の波の谷より上に来て、谷を平らに塗りつぶすため。
+  // 近景の端（中心から 210 m）は波が消えて平らなので、0.5 m だけ重ねて継ぎ目の隙間を防ぐ
+  const far = makeSurface(6000, 160, 0, 0.001, 420 / 2 - 0.5);
+  far.position.y = -0.05; // 重なる帯では近景を優先
   scene.add(near, far);
 
   // 海水の断面（断面表示のとき）。手前の海を箱形に切り取り、その内側の面（船の中心面・両端・底）を海水の切り口として描く。
