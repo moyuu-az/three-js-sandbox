@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>fluid spike</title>
+  <style>body{margin:0;overflow:hidden;background:#111}#s{position:fixed;top:8px;left:8px;color:#fff;font:12px monospace;white-space:pre;background:#0008;padding:6px}</style>
+  <script type="importmap">
+    { "imports": {
+      "three": "../node_modules/three/build/three.webgpu.js",
+      "three/webgpu": "../node_modules/three/build/three.webgpu.js",
+      "three/tsl": "../node_modules/three/build/three.tsl.js",
+      "three/addons/": "../node_modules/three/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+<div id="s"></div>
+<script type="module">
+import * as THREE from 'three/webgpu';
+import { Fn, instanceIndex, vec3, float, mix, length, select } from 'three/tsl';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as V from '../src/voxel.js';
+import { createFluid, OPEN_INFLOW } from '../src/gpu/fluid.js';
+
+const q = new URLSearchParams(location.search);
+const h = 0.25, dims = [48, 32, 96];
+const grid = V.createGrid({ h, origin: [-6, 0, -12], dims });
+const [nx, ny, nz] = dims;
+for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+  const n = grid.index(i, j, k);
+  const border = i === 0 || j === 0 || k === 0 || i === nx - 1 || j === ny - 1 || k === nz - 1;
+  if (border) continue;
+  grid.type[n] = V.NODE_FLUID;
+  grid.room[n] = k < 48 ? 0 : 1;
+  if (k === 48 && !(i >= 22 && i < 26 && j < 10)) grid.type[n] = V.NODE_SOLID; // 隔壁と扉
+}
+// 側面の開口部（x = 0 の壁、k 16..20, j 4..8）
+for (let k = 16; k < 20; k++) for (let j = 4; j < 8; j++) grid.type[grid.index(0, j, k)] = V.NODE_OPENING_OUT + 0;
+for (let k = 16; k < 20; k++) for (let j = 4; j < 8; j++) grid.type[grid.index(1, j, k)] = V.NODE_OPENING_IN + 0;
+const t0 = performance.now();
+const packed = V.packForGpu(grid);
+console.log('pack ms', performance.now() - t0);
+
+const renderer = new THREE.WebGPURenderer({ antialias: true, requiredLimits: { maxStorageBuffersPerShaderStage: 16 } });
+renderer.setSize(innerWidth, innerHeight);
+document.body.append(renderer.domElement);
+await renderer.init();
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x202428);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 500);
+camera.position.set(18, 14, 20);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 2, 0);
+scene.add(new THREE.AxesHelper(2));
+const box = new THREE.Box3Helper(new THREE.Box3(new THREE.Vector3(-6, 0, -12), new THREE.Vector3(6, 8, 12)));
+scene.add(box);
+
+const P = +(q.get('p') ?? 400000);
+const fluid = createFluid(renderer, { dims, maxParticles: P, stiffness: +(q.get('k') ?? 3000), ppc: 8, viscosity: +(q.get('mu') ?? 0.05) });
+fluid.setGrid(packed);
+// ダムブレイク: 部屋 0 の後ろ側に水の塊
+const pts = [];
+const fillN = +(q.get('fill') ?? 200000);
+for (let k = 1.25; k < 47.5 && pts.length / 3 < fillN; k += 0.5) for (let j = 1.25; j < 25 && pts.length / 3 < fillN; j += 0.5) for (let i = 1.25; i < 30 && pts.length / 3 < fillN; i += 0.5) pts.push(i + Math.random() * 0.1, j, k + Math.random() * 0.1);
+fluid.init(new Float32Array(pts));
+
+const mat = new THREE.SpriteNodeMaterial();
+const { pos, vel } = fluid.buffers;
+mat.positionNode = Fn(() => pos.element(instanceIndex).xyz.mul(h).add(vec3(-6, 0, -12)))();
+mat.scaleNode = select(pos.element(instanceIndex).w.greaterThan(0.5), float(0.09), float(0));
+mat.colorNode = Fn(() => {
+  const s = length(vel.element(instanceIndex).xyz).mul(h).div(6).clamp(0, 1);
+  return mix(vec3(0.05, 0.3, 0.8), vec3(0.9, 0.95, 1), s);
+})();
+const sprite = new THREE.Sprite(mat);
+sprite.count = P;
+sprite.frustumCulled = false;
+scene.add(sprite);
+
+const el = document.getElementById('s');
+let last = performance.now(), fps = 0, t = 0;
+const sub = +(q.get('sub') ?? 4);
+const maxFrames = +(q.get("frames") ?? 1e9); let frames = 0;
+function frame() {
+  const now = performance.now();
+  fps = fps * 0.95 + 0.05 * (1000 / (now - last)); last = now;
+  const dt = 1 / 60 / sub;
+  fluid.uniforms.gravity.value.set(0, -9.81 / h, 0);
+  const inflow = q.has('inflow') ? 20 : 0;
+  fluid.setOpening(0, { mode: inflow ? OPEN_INFLOW : 2, inflow: [inflow, 0, 0], center: [1.5, 6, 18], ax: [0, 1.8, 0], ay: [0, 0, 1.8] });
+  fluid.step(dt, sub, inflow ? [{ opening: 0, count: Math.round(inflow * 16 * 8 / 60) }] : []);
+  controls.update();
+  renderer.render(scene, camera);
+  t += 1 / 60;
+  const s = fluid.stats;
+  if (s) {
+    const m = s.moments;
+    el.textContent = `fps ${fps.toFixed(0)}  t ${t.toFixed(1)}\nalive ${s.alive} high ${s.high} free ${s.free} killed ${s.killed}\nroom mass ${s.roomMass.slice(0, 2).map((v) => v.toFixed(0)).join(' / ')}  gridmass ${m[0].toFixed(0)}\ncom ${(m[1] / m[0]).toFixed(2)}, ${(m[2] / m[0]).toFixed(2)}, ${(m[3] / m[0]).toFixed(2)}`;
+  }
+}
+renderer.setAnimationLoop(() => { if (frames++ < maxFrames) frame(); });
+window.advance = async (n) => { for (let i = 0; i < n; i++) { frame(); await renderer.backend.device.queue.onSubmittedWorkDone(); } return document.getElementById('s').textContent; };
+window.fluid = fluid;
+window.ke = async () => {
+  const v = new Float32Array(await renderer.getArrayBufferAsync(fluid.buffers.vel.value));
+  const p = new Float32Array(await renderer.getArrayBufferAsync(fluid.buffers.pos.value));
+  let e = 0, n = 0, maxv = 0, ymax = 0, rho = 0;
+  for (let i = 0; i < v.length / 4; i++) { if (p[4 * i + 3] < 0.5) continue; const s2 = v[4*i]**2 + v[4*i+1]**2 + v[4*i+2]**2; e += s2; n++; maxv = Math.max(maxv, s2); ymax = Math.max(ymax, p[4*i+1]); rho += v[4*i+3]; }
+  return { meanSpeed_ms: Math.sqrt(e / n) * h, maxSpeed_ms: Math.sqrt(maxv) * h, ymax, meanDensityRatio: rho / n };
+};
+window.renderer = renderer;
+window.bench = async (n = 20, sub = 4) => {
+  const q = renderer.backend.device.queue;
+  await q.onSubmittedWorkDone();
+  const t0 = performance.now();
+  for (let i = 0; i < n; i++) fluid.step(1 / 60 / sub, sub, []);
+  await q.onSubmittedWorkDone();
+  const t1 = performance.now();
+  for (let i = 0; i < n; i++) renderer.render(scene, camera);
+  await q.onSubmittedWorkDone();
+  return { simMsPerFrame: (t1 - t0) / n, renderMsPerFrame: (performance.now() - t1) / n };
+};
+</script>
+</body>
+</html>
