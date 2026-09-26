@@ -100,6 +100,8 @@ export function buildShipGrid(h, state = {}) {
   // 船外への開口: 開口面の前後 2 格子の範囲を、船内側 = OPENING_IN、船外側 = OPENING_OUT にする
   const openings = [];
   const carve = (o, meta) => {
+    // 軸が単位ベクトルでない開口（船体の外の点で作った破口は法線が 0 になる）を通すと、範囲判定が全格子点で真になり船全体が開口になる
+    if (![o.normal, o.u, o.v].every((a) => Math.abs(Math.hypot(...a) - 1) < 1e-3) || !(o.half[0] > 0 && o.half[1] > 0)) return;
     const inner = new Map(); // 部屋 → 船内側の格子点
     const outer = [];
     const depth = 2 * h;

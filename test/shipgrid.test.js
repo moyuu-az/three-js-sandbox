@@ -108,6 +108,16 @@ test('破口: 右舷・喫水線下の破口は右舷向きで、その部屋の
   assert.ok(reachesOut);
 });
 
+test('破口: 船体の外の点（法線が決まらない）で作った破口は格子を変えない', () => {
+  const base = buildShipGrid(h, allClosed).grid;
+  for (const [x, y, z] of [[3.5, 6.5, 0], [3, 1.5, 15.5]]) {
+    assert.equal(H.halfBreadth(z, y), -1);
+    const { grid, openings } = buildShipGrid(h, { ...allClosed, breaches: [breachAt(x, y, z)] });
+    assert.equal(openings.length, 0, `${[x, y, z]}`);
+    assert.deepEqual(grid.type, base.type, `${[x, y, z]} で格子が変わった`);
+  }
+});
+
 test('距離場・滑り境界: 隔壁の法線は z 軸、第 2 甲板は y 軸、隣の水の格子点までの距離は 1', () => {
   const { grid } = buildShipGrid(h, allClosed);
   const pk = V.packForGpu(grid);
