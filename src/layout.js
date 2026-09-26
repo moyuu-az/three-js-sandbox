@@ -89,6 +89,11 @@ export const SEA_OPENINGS = [
   { id: 'o7', name: '操舵機室 通風筒', kind: 'vent', open: true, center: [1.5, deckY(-13.8), -13.8], normal: [0, 1, 0], u: [1, 0, 0], v: [0, 0, 1], half: [0.25, 0.25] },
 ];
 
+// 外板が破れる内外の圧力差 [Pa]（外向きの破裂・内向きの圧潰とも）。長さ 30 m 級の鋼船の目安:
+//   外板（肋骨 0.6 m 間隔・板厚 8〜10 mm）は塑性崩壊まで ~0.3 MPa、上甲板 ~0.15 MPa、甲板室の壁（板厚 5 mm 程度）~60 kPa。
+//   閉じたハッチ蓋・扉・通風筒の蓋は締め付け金具が先に外れるので最も弱い（~50 kPa）
+export const STRENGTH = { hull: 300e3, deck: 150e3, house: 60e3, closure: 50e3 };
+
 // 'deck' / 'deck+Δ' を z での高さに解決する
 export function resolveY(v, z) {
   if (typeof v === 'number') return v;

@@ -80,6 +80,8 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     ay: uniformArray(new Array(MAX_OPENINGS).fill(0).map(() => new THREE.Vector4()), 'vec4'), // 生成範囲の半軸 2
     vel: uniformArray(new Array(MAX_OPENINGS).fill(0).map(() => new THREE.Vector4()), 'vec4'), // 生成時の速度
   };
+  // 部屋の空気の圧力（x = g·水頭 / h² [セル²/s²]）。setRoomHeads で入れる
+  const roomPhi = uniformArray(new Array(MAX_ROOMS).fill(0).map(() => new THREE.Vector4()), 'vec4');
 
   // ---------- 共通: 2 次 B スプラインの 3×3×3 ステンシル（JS 側で展開して WGSL に直書きする） ----------
   const strideY = nx, strideZ = nx * ny;
@@ -177,6 +179,18 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     v.addAssign(acc.mul(u.dt));
     const info = nodeInfo.element(i);
     const type = info.w.toVar();
+    // 部屋の空気の圧力: 水面を押す空気の圧力は、部屋の中では一様なので流れを生まず、別の部屋との境目（開いた扉・ハッチ）でだけ
+    // 圧力の段差として効く。境目の両側の 2 格子点に −∇φ（中心差分）を掛けると、合計でちょうど ρ·g·Δ水頭 の段差になる。
+    // 隣が壁・船外・部屋なしなら自分と同じ値（段差なし）。
+    // 圧力は体積に働く力なので、格子点の質量が静止密度より少ない分（扉は狭く、格子点のほとんどが壁際で、粒子を壁から離して
+    // 置くため質量が 5〜8 割になる）は ρ₀/m で補う（最大 2 倍）。補わないと段差が 7 割しか効かなかった（セルフテストで実測）
+    const room = roomOf.element(i).toVar();
+    If(room.lessThan(NO_ROOM).and(type.equal(0).or(type.greaterThanEqual(NODE_OPENING_IN).and(type.lessThan(NODE_OPENING_OUT)))), () => {
+      const phi0 = roomPhi.element(room).x;
+      const phi = (off) => { const r = roomOf.element(i.add(off)); return select(r.lessThan(NO_ROOM), roomPhi.element(r).x, phi0); };
+      const fill = clamp(float(rho0).div(m), 1, 2);
+      v.subAssign(vec3(phi(1).sub(phi(-1)), phi(strideY).sub(phi(-strideY)), phi(strideZ).sub(phi(-strideZ))).mul(u.dt.mul(0.5).mul(fill)));
+    });
     const n = info.xyz;
     const slip = () => {
       If(dot(n, n).greaterThan(0.5), () => { v.subAssign(n.mul(dot(v, n))); }).Else(() => { v.assign(vec3(0)); });
@@ -413,6 +427,15 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     open.vel.array[k].set(spawnVel[0], spawnVel[1], spawnVel[2], 0);
   }
 
+  // 部屋ごとの空気のゲージ圧を水頭 [m] で入れる（h: 格子間隔 [m]）。境目の段差が大きすぎると、弱圧縮の水が段差の分だけ縮んで
+  // 安定条件（fluidParams は水深 5 m 相当）を外れるので、水頭は −2〜10 m に抑える（破断の強度で実際はこの範囲に収まる）
+  function setRoomHeads(heads, h) {
+    for (let r = 0; r < MAX_ROOMS; r++) {
+      const H = Number.isFinite(heads[r]) ? Math.min(10, Math.max(-2, heads[r])) : 0;
+      roomPhi.array[r].x = (9.81 * H) / (h * h);
+    }
+  }
+
   // 初期配置（テスト・デモ用）。xyz を格子座標で並べた配列
   function init(points) {
     const n = Math.min(P, points.length / 3);
@@ -430,7 +453,7 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
 
   return {
     dims, ppc, init, maxParticles: P, uniforms: u, buffers: { pos, vel, gridV },
-    setGrid, setOpening, step,
+    setGrid, setOpening, setRoomHeads, step,
     get stats() { return latest; },
     get drawCount() { return hwUpper; },
   };

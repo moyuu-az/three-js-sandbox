@@ -48,20 +48,22 @@ export function waterLevel(nodes, h, volume, up, scratch = new Float32Array(node
 
 /**
  * 開口部 1 つの流量。samples（開口面上の点）ごとに内外の水頭差からオリフィス式 Q = Cd·A·√(2gΔh) を足す。
- * ctx.toWorld(p) → ワールド座標、ctx.sea(x, z) → 海面高さ、ctx.up（船体座標の上向き）、ctx.level（部屋の水面）
+ * ctx.toWorld(p) → ワールド座標、ctx.sea(x, z) → 海面高さ、ctx.up（船体座標の上向き）、ctx.level（部屋の水面）、
+ * ctx.airHead（部屋の空気のゲージ圧を水頭 [m] にしたもの。閉じ込められた空気が縮むと正になり流入を押し返す。省略時 0）
  * 戻り値: q [m³/s]（正 = 流入）、mode（'free' = 海面より上で開放 / 'inflow' / 'closed'）、speed = 噴流の速さ [m/s]
  */
 export function openingFlow(opening, ctx, g = 9.81) {
   const pts = opening.samples;
   const a = opening.area / pts.length;
+  const air = ctx.airHead ?? 0;
   let q = 0, submerged = 0, headSum = 0, inflowPts = 0;
   for (const p of pts) {
     const w = ctx.toWorld(p);
     const hOut = Math.max(0, ctx.sea(w[0], w[2]) - w[1]);
-    const hIn = Math.max(0, ctx.level - (ctx.up[0] * p[0] + ctx.up[1] * p[1] + ctx.up[2] * p[2]));
-    if (hOut > 0) submerged++;
-    const dh = hOut - hIn;
-    if (hOut <= 0 && hIn <= 0) continue;
+    if (hOut <= 0) continue; // 船外が空気（海面より上）: 水は入らない（空気の出入りは air.js）
+    submerged++;
+    // 船内側の圧力 = 空気の圧力 + 水面より下なら水の重さ
+    const dh = hOut - (Math.max(0, ctx.level - (ctx.up[0] * p[0] + ctx.up[1] * p[1] + ctx.up[2] * p[2])) + air);
     if (dh > 0) { q += CD * a * Math.sqrt(2 * g * dh); headSum += dh; inflowPts++; }
   }
   if (submerged === 0) return { q: 0, mode: 'free', speed: 0 };
