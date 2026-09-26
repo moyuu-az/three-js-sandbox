@@ -65,10 +65,23 @@ export function createFx(scene, sim, shipGroup, max = 40000) {
   // 船体の内側（船体座標で外殻の中）に入った煙・しぶきは描かない。断面表示で船内に爆発の煙が漂って見えるのを防ぐ
   const shipInv = new THREE.Matrix4();
   const inHull = (x, y, z) => { lp.set(x, y, z).applyMatrix4(shipInv); return H.inside(lp.x, lp.y, lp.z); };
+  // 生きている範囲 [0, count) だけ GPU に送る（毎フレーム max 個分の全体を送らない）
+  const attrs = [[aPos, 3], [aCol, 4], [aSize, 1]];
+  function upload() {
+    sprite.count = count;
+    if (count === 0) return;
+    for (const [a, n] of attrs) { a.clearUpdateRanges(); a.addUpdateRange(0, count * n); a.needsUpdate = true; }
+  }
+  const foamAlpha = (i, cut, surfA) => (inCut(cut, pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]) ? 0 : base[i] * Math.min(1, life[i] / 2.5) * surfA);
   function update(dt, { under = false, wind = [1.2, 0, 0.4], cut = null } = {}) {
     shipInv.copy(shipGroup.matrixWorld).invert();
-    if (dt <= 0) { aPos.needsUpdate = aCol.needsUpdate = aSize.needsUpdate = true; return; }
     const surfA = under ? 0.25 : 1;
+    if (dt <= 0) {
+      // 一時停止中も、断面の切り替え・視点の回り込み（切る側が変わる）と水中への出入りは泡の見え方に反映する
+      for (let i = 0; i < count; i++) if (type[i] === P.SEA_FOAM || type[i] === P.WAKE) col[4 * i + 3] = foamAlpha(i, cut, surfA);
+      upload();
+      return;
+    }
     for (let i = 0; i < count;) {
       const k = 3 * i, t = type[i];
       life[i] -= dt;
@@ -90,7 +103,7 @@ export function createFx(scene, sim, shipGroup, max = 40000) {
         const d = Math.exp(-0.8 * dt); vel[k] *= d; vel[k + 2] *= d;
         pos[k + 1] = sea + 0.04;
         size[i] += (t === P.WAKE ? 0.12 : 0.18) * dt;
-        col[4 * i + 3] = inCut(cut, pos[k], pos[k + 1], pos[k + 2]) ? 0 : base[i] * Math.min(1, life[i] / 2.5) * surfA;
+        col[4 * i + 3] = foamAlpha(i, cut, surfA);
       } else if (t === P.SMOKE || t === P.MIST) { // 煙: 上昇しながら風に流され、広がって薄くなる
         vel[k] += (wind[0] - vel[k]) * 0.4 * dt; vel[k + 2] += (wind[2] - vel[k + 2]) * 0.4 * dt;
         vel[k + 1] += ((t === P.SMOKE ? 2.2 : 0.1) - vel[k + 1]) * 0.5 * dt;
@@ -101,8 +114,7 @@ export function createFx(scene, sim, shipGroup, max = 40000) {
       pos[k] += vel[k] * dt; pos[k + 1] += vel[k + 1] * dt; pos[k + 2] += vel[k + 2] * dt;
       i++;
     }
-    sprite.count = count;
-    aPos.needsUpdate = aCol.needsUpdate = aSize.needsUpdate = true;
+    upload();
   }
 
   // 開口部まわり: 流入している海面下の開口から気泡（船内の空気が押し出される）と海面の渦の泡
