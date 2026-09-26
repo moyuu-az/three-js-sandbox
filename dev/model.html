@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>model check</title>
+  <style>body{margin:0;overflow:hidden;background:#000}#s{position:fixed;top:8px;left:8px;color:#fff;font:12px monospace;background:#0008;padding:6px;white-space:pre}</style>
+  <script type="importmap">
+    { "imports": {
+      "three": "../node_modules/three/build/three.webgpu.js",
+      "three/webgpu": "../node_modules/three/build/three.webgpu.js",
+      "three/tsl": "../node_modules/three/build/three.tsl.js",
+      "three/addons/": "../node_modules/three/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+<div id="app"></div><div id="s"></div>
+<script type="module">
+// 開発用: 流体なしで舞台・船・海面だけを描く（WebGPU が無くても WebGL で確認できる）
+import * as THREE from 'three/webgpu';
+import { createStage } from '../src/render/stage.js';
+import { buildShipModel } from '../src/render/shipModel.js';
+import { createOcean } from '../src/render/ocean.js';
+import * as W from '../src/waves.js';
+const q = new URLSearchParams(location.search);
+const log = (m) => { document.getElementById('s').textContent += m + '\n'; };
+try {
+  const stage = await createStage(document.getElementById('app'), { seabedY: -38, allowWebGL: true });
+  log('backend: ' + (stage.renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL'));
+  const t0 = performance.now();
+  const model = buildShipModel({ h: 0.3, draft: 2.6 });
+  log('model ms ' + (performance.now() - t0).toFixed(0));
+  model.group.position.y = -2.6;
+  stage.scene.add(model.group);
+  const ocean = createOcean(stage.scene, { sunDir: stage.sunDir });
+  ocean.setWaves(W.makeWaves(0.9, 5.5));
+  model.group.add(ocean.section);
+  model.cut.enabled = q.has('cut');
+  if (q.has('cut')) model.cut.clippingPlanes[0].set(new THREE.Vector3(-1, 0, 0), 0);
+  const pipeline = stage.createPipeline((c) => c);
+  const cam = (q.get('cam') ?? '34,13,30').split(',').map(Number);
+  stage.camera.position.set(...cam);
+  let t = 0;
+  window.draw = () => {
+    t += 1 / 30;
+    model.group.updateMatrixWorld(true);
+    ocean.update(t, stage.camera, model.group, q.has('cut') ? 1 : 0);
+    stage.controls.update();
+    pipeline.render();
+  };
+  window.stage = stage;
+  window.model = model;
+  if (q.has("loop")) stage.renderer.setAnimationLoop(window.draw); else window.draw();
+} catch (e) { log('ERR ' + e.stack); console.error(e); }
+</script>
+</body>
+</html>
