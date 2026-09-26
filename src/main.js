@@ -131,10 +131,8 @@ async function main() {
   // exterior: 外観 / xray: 透視（カメラの側の外殻だけ透かす）/ cutaway: 断面（中心線で縦に切る）
   let view = 'exterior', cutSide = 0, follow = true, peel = 'none';
   // 甲板を外す高さ（船体座標の y）。上甲板 = 居住区の天井の下、第 2 甲板 = 船倉の天井の下。
-  // 上部構造 = 甲板で最も高い所（船首のそり）の少し上。甲板室の床の高さにすると、そりで高い船首・船尾の甲板まで切れる
-  let deckTop = 0;
-  for (let z = H.Z_MIN; z <= H.Z_MAX; z += 0.1) deckTop = Math.max(deckTop, H.deckY(z));
-  const PEEL = { none: 1e3, house: deckTop + 0.1, deck: H.D - 0.35, deck2: Lo.DECK2 - 0.12 };
+  // 上部構造 = 甲板で最も高い所（船首のそり、H.Y_MAX）の少し上。甲板室の床の高さにすると、そりで高い船首・船尾の甲板まで切れる
+  const PEEL = { none: 1e3, house: H.Y_MAX + 0.1, deck: H.D - 0.35, deck2: Lo.DECK2 - 0.12 };
   model.cut.clippingPlanes = [new THREE.Plane(), new THREE.Plane()]; // [断面, 甲板を外す]。使わない面は遠くに置く（数を変えると材質を作り直す）
   const setView = (v) => {
     view = v;

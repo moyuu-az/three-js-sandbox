@@ -26,6 +26,11 @@ test('格子: どの部屋にも水の入る格子点があり、部屋の無い
   for (let n = 0; n < grid.N; n++) if (grid.type[n] === V.NODE_FLUID) assert.notEqual(grid.room[n], V.NO_ROOM);
 });
 
+test('船体: H.Y_MAX は上甲板で最も高い点（透視で「上部構造」を外す高さの元。これより低いと船首・船尾の甲板まで切れる）', () => {
+  for (let z = H.Z_MIN; z <= H.Z_MAX; z += 0.05) assert.ok(H.deckY(z) <= H.Y_MAX + 1e-12, `z=${z}`);
+  assert.equal(H.Y_MAX, Math.max(H.deckY(H.Z_MIN), H.deckY(H.Z_MAX)));
+});
+
 test('格子: 船外の格子点が船体を 1 層以上囲んでいる（粒子が格子の端に届かない）', () => {
   const { grid } = buildShipGrid(h);
   const [nx, ny, nz] = grid.dims;
@@ -193,12 +198,17 @@ test('上限: 開口が MAX_OPENINGS を超えたら、入らなかった片の�
   const full = buildShipGrid(h, { breaches });
   assert.equal(full.openings.length, V.MAX_OPENINGS);
   assert.ok(full.dropped > 0, `${full.dropped}`);
-  // 入りきらない片は格子にも開口として残らない（開口の番号は 0..MAX_OPENINGS−1 だけ）。種類の番号は船内側・船外側の範囲に収まる
+  // 入りきらない片は格子にも開口として残らない。MAX_OPENINGS = OUT − IN なので、あふれた片を IN + MAX_OPENINGS と書くと
+  // 開口 0 の船外側（粒子を消す）になってしまう。種類の番号の範囲だけでは見分けられないので、元の格子点の側で確かめる:
+  // 船内側は水の格子点（部屋あり）を開口の部屋のまま、船外側は船外の格子点（部屋なし）だけ
   for (let n = 0; n < full.grid.N; n++) {
-    const t = full.grid.type[n];
-    if (t >= V.NODE_OPENING_IN) assert.ok(t < V.NODE_OPENING_OUT + V.MAX_OPENINGS && (t - V.NODE_OPENING_IN) % V.MAX_OPENINGS < V.MAX_OPENINGS, `${t}`);
+    const t = full.grid.type[n], r = full.grid.room[n];
+    if (t < V.NODE_OPENING_IN) continue;
+    assert.ok(t < V.NODE_OPENING_OUT + V.MAX_OPENINGS, `種類 ${t}`);
+    if (t < V.NODE_OPENING_OUT) assert.equal(r, full.openings[t - V.NODE_OPENING_IN].room, `船内側 ${t} の部屋`);
+    else assert.equal(r, V.NO_ROOM, `船外側 ${t} に部屋 ${r} の水の格子点が入った`);
   }
-  assert.ok(V.MAX_OPENINGS >= 32, '常設 8 + 魚雷 + 破断 6 の余裕');
+  assert.ok(V.MAX_OPENINGS >= 32, '常設 8 + 魚雷の破口 + 破断の余裕');
   // 収まっていれば 0
   const fits = buildShipGrid(h, { breaches: breaches.slice(0, 1) });
   assert.equal(fits.dropped, 0);
