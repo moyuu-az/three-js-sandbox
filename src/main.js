@@ -169,9 +169,9 @@ async function main() {
     if (!downAt || downAt[2] !== 0 || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     ray.setFromCamera(ndc, camera);
-    const hit = ray.intersectObjects(model.hullMeshes)[0];
-    if (!hit) return;
-    const local = model.group.worldToLocal(hit.point.clone());
+    // raycast はクリッピングを見ない。断面表示では切り取った手前側（船体座標で x·cutSide > 0）の外板は見えないので飛ばす
+    const local = ray.intersectObjects(model.hullMeshes).map((h) => model.group.worldToLocal(h.point.clone())).find((p) => !cutSide || p.x * cutSide <= 0.01);
+    if (!local) return;
     launch([local.x, local.y, local.z], local.x >= 0 ? 1 : -1);
   });
 
@@ -267,7 +267,7 @@ async function main() {
   // ---------- ループの状態 ----------
   const clock = new THREE.Timer();
   let acc = 0, simTime = 0, uiTimer = 0, smokeDebt = 0, flows = [], lastInflow = 0;
-  let fps = 60, lastStatus = '', fillPrev = new Array(Lo.ROOMS.length).fill(0), deckWet = false, grounded = false;
+  let frameSec = 1 / 60, lastStatus = '', fillPrev = new Array(Lo.ROOMS.length).fill(0), deckWet = false, grounded = false;
   const up = [0, 1, 0], upV = new THREE.Vector3();
   const levels = new Array(Lo.ROOMS.length).fill(-Infinity);
   const scratch = new Float32Array(Math.max(...roomNodes.map((a) => a.length / 3)) + 16);
@@ -275,14 +275,20 @@ async function main() {
   const mp = RHO * particleVolume; // 粒子 1 個の質量 [kg]
 
   let lastFrameAt = 0;
+  const FRAME_MS = 1000 / 60;
   // forced: 検証用に実時間でなく決まった時間だけ進める
   function frame(now = performance.now(), forced = 0) {
     // 高リフレッシュレートの画面でも 60 fps を上限にする（GPU の負荷を必要以上に上げない）
-    if (!forced && now - lastFrameAt < 1000 / 62) return;
-    lastFrameAt = now;
+    // 描画の予定時刻を FRAME_MS ずつ進める（now を記録すると、144 Hz では 3 回に 1 回 = 48 fps に落ちる）。
+    // 1.5 ms: vsync の揺らぎで 60 Hz の画面の 1 回を取りこぼさないように。遅れが 1 回分を超えたら追いつかず今から数え直す
+    if (!forced) {
+      if (now - lastFrameAt < FRAME_MS - 1.5) return;
+      lastFrameAt = Math.max(lastFrameAt + FRAME_MS, now - FRAME_MS);
+    }
     clock.update();
     const real = forced || Math.min(clock.getDelta(), 1 / 20);
-    fps = fps * 0.95 + 0.05 / Math.max(real, 1e-4);
+    // 間隔の平均の逆数で表示する（1/Δt を平均すると、間引きで間隔が揺れる画面では実際より高く出る）
+    frameSec = frameSec * 0.95 + 0.05 * real;
     // 流体のサブステップ数。上限を超えるならスロー再生にする（GPU を無理に回さない）
     let dt = real * speed;
     let nSub = Math.max(1, Math.ceil(dt / dtMax));
@@ -401,7 +407,7 @@ async function main() {
     $('mReserve').className = reserve < 0.25 ? 'danger' : reserve < 0.6 ? 'warn' : '';
     $('mHeel').className = Math.abs(s.rollDeg) > 15 ? 'danger' : Math.abs(s.rollDeg) > 5 ? 'warn' : '';
     $('reserveBar').style.width = `${reserve * 100}%`;
-    $('perf').textContent = `${fps.toFixed(0)} fps ・ 水の粒子 ${(st?.alive ?? 0).toLocaleString()} / ${Q.max.toLocaleString()} ・ 格子 ${spec.dims.join('×')} (h=${h} m)`;
+    $('perf').textContent = `${(1 / frameSec).toFixed(0)} fps ・ 水の粒子 ${(st?.alive ?? 0).toLocaleString()} / ${Q.max.toLocaleString()} ・ 格子 ${spec.dims.join('×')} (h=${h} m)`;
     chart.push(simTime, [s.rollDeg, s.pitchDeg, water / 1000]);
     chart.draw();
 
