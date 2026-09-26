@@ -331,6 +331,8 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
 
   // ---------- CPU 側の管理 ----------
   let hwUpper = 0; // 粒子の添字の上限（GPU の highWater の CPU 側の上界。ディスパッチ数に使う）
+  let spawnIssued = 0; // これまでに投げた生成数の累計（読み戻しを出した後に増えた分を上界に足すため）
+  let epoch = 0; // init のたびに増やす。init 前に出した読み戻しの値（別の粒子の集合）を捨てる
   let latest = null, pending = false, frame = 0;
 
   const upload = (node, data) => { const a = node.value; a.array.set(data); a.needsUpdate = true; };
@@ -365,6 +367,7 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
       u.seed.value = (frame * 7919) % 100000;
       renderer.compute([spawn, fixCounters], total);
       hwUpper = Math.min(P, hwUpper + total);
+      spawnIssued += total;
     }
     frame++;
     if (!pending) readback();
@@ -372,17 +375,23 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
 
   async function readback() {
     pending = true;
+    // 読み戻しのコピーはここで（この後に投げる生成より前に）キューに積まれる。返事の HIGH にはここまでの生成が入っている
+    const mark = spawnIssued, ep = epoch;
     try {
       const [cnt, rooms, part] = await Promise.all([
         renderer.getArrayBufferAsync(counters.value),
         renderer.getArrayBufferAsync(roomAcc.value),
         renderer.getArrayBufferAsync(partials.value),
       ]);
+      if (ep !== epoch) return;
       const c = new Int32Array(cnt), pr = new Float32Array(part);
       const mom = new Float64Array(MOMENTS);
       for (let w = 0; w < nWG; w++) for (let q = 0; q < MOMENTS; q++) mom[q] += pr[w * MOMENTS + q];
       const high = c[C_HIGH];
-      hwUpper = Math.max(Math.min(hwUpper, P), high); // GPU の値が確定したら上界を締める（生成中の分は hwUpper が持つ）
+      // GPU の値が確定したら上界を締める。生成はフリーリストから先に取るので HIGH は hwUpper ほど増えない。
+      // 締めないと、船外へ出た分を入れ直すたびに hwUpper だけ増え、やがて全スロット（P）をディスパッチ・描画し続ける。
+      // 読み戻しを出した後に投げた生成（spawnIssued − mark）は返事の HIGH に入っていないので足す
+      hwUpper = Math.min(hwUpper, P, high + (spawnIssued - mark));
       latest = {
         high, free: c[C_FREE_TOP], killed: c[C_KILLED], reverts: c[C_REVERT], alive: high - c[C_FREE_TOP],
         roomMass: Array.from(new Int32Array(rooms)), // 粒子の数
@@ -413,6 +422,8 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     counters.value.array.set([0, n, 0, 0]);
     counters.value.needsUpdate = true;
     hwUpper = n;
+    epoch++;
+    latest = null;
   }
 
   return {
