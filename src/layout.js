@@ -133,7 +133,8 @@ export const STRENGTH = { hull: 400e3, deck: 250e3, closure: 100e3 };
 // 'upper' / 'deck' / 'upper+Δ' / 'upper-Δ' を z での高さに解決する
 export function resolveY(v, z) {
   if (typeof v === 'number') return v;
-  const m = /^(upper|deck)(?:([+-])([\d.]+))?$/.exec(v);
+  // 数値の部分は厳密に（'upper+1.2.3' を Number() が NaN にすると、比較が全部偽になって板・部屋が黙って消える）
+  const m = /^(upper|deck)(?:([+-])(\d+(?:\.\d+)?))?$/.exec(v);
   if (!m) throw new Error(`layout: unknown y spec ${v}`);
   const base = m[1] === 'upper' ? upperY(z) : deckY(z);
   return m[2] ? base + (m[2] === '+' ? 1 : -1) * Number(m[3]) : base;

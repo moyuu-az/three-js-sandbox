@@ -80,6 +80,37 @@ test('格子: 水密区画は 15（14 枚の水密隔壁）で、缶室 3・機�
   for (const name of ['第1缶室', '第2缶室', '第3缶室', '前部機械室', '後部機械室']) assert.deepEqual(byComp(Lo.ROOMS[R(name)].comp), new Set([name]));
 });
 
+test('配置: resolveY は上甲板・最上甲板と ±Δ を z ごとに解決し、書式の誤りは例外にする', () => {
+  const z = 45; // 船首楼の範囲（上甲板と最上甲板が違う）
+  assert.equal(Lo.resolveY(3.6, z), 3.6);
+  assert.equal(Lo.resolveY('upper', z), H.upperY(z));
+  assert.equal(Lo.resolveY('deck', z), H.deckY(z));
+  assert.ok(Math.abs(Lo.resolveY('upper-0.4', z) - (H.upperY(z) - 0.4)) < 1e-12);
+  assert.ok(Math.abs(Lo.resolveY('upper+1.9', z) - (H.upperY(z) + 1.9)) < 1e-12);
+  assert.ok(Math.abs(Lo.resolveY('deck-2', -30) - (H.upperY(-30) - 2)) < 1e-12, '船首楼より後ろでは最上甲板 = 上甲板');
+  for (const bad of ['main', 'upper+', 'upper+1.2.3', 'upper+.', 'upper 0.4', 'Upper']) assert.throws(() => Lo.resolveY(bad, z), bad);
+});
+
+test('格子: 水密扉・水密ハッチは開けると名前の 2 室の区画をつなぎ、閉じれば（既定）つながない（格子間隔 0.42 / 0.5 / 0.6）', () => {
+  // 扉ごとの両側の部屋（名前の「A↔B」）。水密の扉を足したらここにも足す（足し忘れは下の件数の比較で落ちる）
+  const sides = {
+    D1: ['前部倉庫', '前部兵員室 1'], D2: ['前部兵員室 1', '前部兵員室 2'], D3: ['前部機械室', '後部機械室'],
+    D4: ['後部兵員室 1', '後部兵員室 2'], D5: ['後部兵員室 2', '士官室'], D6: ['士官室', '艦長室'],
+    D7: ['前部兵員室 1', '船首楼 前部'], D8: ['前部兵員室 2', '船首楼 後部'],
+  };
+  assert.deepEqual(Object.keys(sides).sort(), Lo.DOORS.filter((x) => x.wt).map((x) => x.id).sort());
+  for (const hh of [0.42, 0.5, 0.6]) {
+    const closed = buildShipGrid(hh, allClosed).grid;
+    for (const d of Lo.DOORS.filter((x) => x.wt)) {
+      const [a, b] = sides[d.id];
+      assert.notEqual(Lo.ROOMS.find((r) => r.name === a).comp, Lo.ROOMS.find((r) => r.name === b).comp, `${d.id} は水密区画の境目`);
+      const g = buildShipGrid(hh, { ...allClosed, doors: { ...allClosed.doors, [d.id]: true } }).grid;
+      assert.ok(reach(g, nodeIn(g, a)).has(b), `h=${hh} ${d.id}: 開けても ${a} から ${b} へ届かない`);
+      assert.ok(!reach(closed, nodeIn(closed, a)).has(b), `h=${hh} ${d.id}: 閉じても ${a} から ${b} へ届く`);
+    }
+  }
+});
+
 test('格子: 水密扉・水密ハッチを開けると隣の区画とつながる', () => {
   const open = (id) => buildShipGrid(h, { ...allClosed, doors: { ...allClosed.doors, [id]: true } }).grid;
   let g = open('D3');
@@ -180,8 +211,43 @@ test('格子: 二重底（タンクトップより下）は固体で浸水しな
   }
 });
 
-test('格子: 格子間隔を変えても（品質プリセット）水密区画は閉じたまま', () => {
-  for (const hh of [0.42, 0.6]) assertCompartmentsSealed(buildShipGrid(hh, allClosed).grid, `h=${hh}`);
+test('格子: 格子間隔を変えても（品質プリセット）水密区画は閉じたまま（既定・全閉とも）', () => {
+  // 既定では船首楼の後端扉 o2/o3 が開いている。開口の船外側の格子点が段の後ろの上甲板（第1缶室の天井）まで回り込むと、
+  // 第1缶室の天井に穴が開いて船首楼とつながる（格子点の並び方で h = 0.5 では出ず、0.42・0.6 で出た）
+  for (const hh of [0.42, 0.6]) {
+    assertCompartmentsSealed(buildShipGrid(hh).grid, `既定 h=${hh}`);
+    assertCompartmentsSealed(buildShipGrid(hh, allClosed).grid, `全閉 h=${hh}`);
+  }
+});
+
+test('開口: 船外側の格子点は、その開口が開く部屋以外の水の格子点に接しない（段の角で隣の部屋の天井に穴を開けない）', () => {
+  const wet = (t) => t === V.NODE_FLUID || (t >= V.NODE_OPENING_IN && t < V.NODE_OPENING_OUT);
+  const nbr = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  for (const hh of [0.42, 0.5, 0.6]) {
+    // 常設の開口（既定）と、船首楼の後端壁の上甲板すれすれに開いた破断の穴
+    const low = ruptureAt([2, H.upperY(H.FC_Z) + 0.35, H.FC_Z], [0, 0, -1], 0.8, { kind: 'rupture' });
+    for (const [label, state] of [['既定', {}], ['後端壁の破断', { ...allClosed, breaches: [low] }]]) {
+      const { grid, openings } = buildShipGrid(hh, state);
+      const [nx, ny, nz] = grid.dims;
+      for (let n = 0; n < grid.N; n++) {
+        const t = grid.type[n];
+        if (t < V.NODE_OPENING_OUT) continue;
+        const o = openings[t - V.NODE_OPENING_OUT];
+        const rooms = new Set(openings.filter((x) => x.id === o.id).map((x) => x.room));
+        const [i, j, k] = grid.coords(n);
+        for (const [a, b, c] of nbr) {
+          if (i + a < 0 || j + b < 0 || k + c < 0 || i + a >= nx || j + b >= ny || k + c >= nz) continue;
+          const m = grid.index(i + a, j + b, k + c);
+          if (wet(grid.type[m])) assert.ok(rooms.has(grid.room[m]), `${label} h=${hh} ${o.name}: 船外側が ${Lo.ROOMS[grid.room[m]]?.name} に接する`);
+        }
+      }
+      // 開口は船外側を失わない（船首楼の後端扉は段の後ろの上甲板の上に船外側がある）
+      for (const id of new Set(openings.map((o) => o.id))) {
+        const ks = new Set(openings.filter((o) => o.id === id).map((o) => V.NODE_OPENING_OUT + o.k));
+        assert.ok(grid.type.some((t) => ks.has(t)), `${label} h=${hh} ${id}: 船外側の格子点が無い`);
+      }
+    }
+  }
 });
 
 // ---------- 空気圧・水圧による破断の穴 ----------

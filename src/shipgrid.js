@@ -104,7 +104,7 @@ export function buildShipGrid(h, state = {}) {
     // 軸が単位ベクトルでない開口（船体の外の点で作った破口は法線が 0 になる）を通すと、範囲判定が全格子点で真になり船全体が開口になる
     if (![o.normal, o.u, o.v].every((a) => Math.abs(Math.hypot(...a) - 1) < 1e-3) || !(o.half[0] > 0 && o.half[1] > 0)) return;
     const inner = new Map(); // 部屋 → 船内側の格子点
-    const outer = [];
+    const outer0 = [];
     const depth = 2 * h;
     for (let n = 0; n < grid.N; n++) {
       const t = type[n];
@@ -113,12 +113,26 @@ export function buildShipGrid(h, state = {}) {
       const d = sub(p, o.center);
       const a = dot(d, o.u), b = dot(d, o.v), c = dot(d, o.normal);
       if (Math.abs(a) > o.half[0] + 1e-6 || Math.abs(b) > o.half[1] + 1e-6 || c < -depth || c > depth) continue;
-      if (t === V.NODE_EXTERIOR) outer.push(n);
+      if (t === V.NODE_EXTERIOR) outer0.push(n);
       else { const r = room[n]; if (!inner.has(r)) inner.set(r, []); inner.get(r).push(n); }
     }
     let total = 0;
     for (const ns of inner.values()) total += ns.length;
     if (total === 0) return;
+    // 船外側は、この開口が開く部屋以外の水の格子点に接するものを外す。船外側は粒子を消す（押し返さない）ので、そこに接した
+    // 別の部屋の境目が開く。船首楼の後端扉・後端壁の破断では、船外側の範囲が段の後ろの上甲板（第1缶室の天井。板ではなく船外で
+    // 閉じている）まで回り込み、格子点の並び方によって第1缶室の天井に穴が開いて船首楼とつながった
+    const own = new Set(inner.keys());
+    const foreign = (n) => {
+      const [i, j, k] = grid.coords(n);
+      for (const [a, b, c] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+        if (i + a < 0 || j + b < 0 || k + c < 0 || i + a >= nx || j + b >= ny || k + c >= nz) continue;
+        const m = grid.index(i + a, j + b, k + c), t = type[m];
+        if ((t === V.NODE_FLUID || (t >= V.NODE_OPENING_IN && t < V.NODE_OPENING_OUT)) && !own.has(room[m])) return true;
+      }
+      return false;
+    };
+    const outer = outer0.filter((n) => !foreign(n));
     const pieces = [...inner.entries()].sort((p, q) => q[1].length - p[1].length);
     for (const [r, ns] of pieces) {
       if (openings.length >= V.MAX_OPENINGS) { dropped++; continue; }

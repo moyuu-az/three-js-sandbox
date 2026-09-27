@@ -46,9 +46,9 @@ test('質量特性: 点群のモーメントから重心まわりの慣性', () 
   assert.deepEqual(w.inertia, [0, 2, 2, -0, -0, -0]);
 });
 
-test('艦型: 外殻の体積は予備浮力を持ち、設計喫水の排水量（公試排水量 3,048 t の ±4%）が艦の重さ', () => {
+test('艦型: 外殻の体積は予備浮力を持ち、設計喫水の排水量（公試排水量 3,048 t の ±3%）が艦の重さ', () => {
   assert.ok(ENVELOPE_VOLUME * RHO > SHIP_MASS * 2, `外殻 ${ENVELOPE_VOLUME} m³`);
-  assert.ok(Math.abs(SHIP_MASS / 3048e3 - 1) < 0.04, `${SHIP_MASS}`);
+  assert.ok(Math.abs(SHIP_MASS / 3048e3 - 1) < 0.03, `${SHIP_MASS}`);
 });
 
 test('艦型: 重心の高さ KG = KM − GM（駆逐艦の典型 4〜5 m）、前後は浮心の位置', () => {
@@ -60,11 +60,34 @@ test('艦型: 重心の高さ KG = KM − GM（駆逐艦の典型 4〜5 m）、�
   assert.ok(Math.abs(SHIP_COM[2] - d.lcb) < 0.3, `LCG ${SHIP_COM[2]} LCB ${d.lcb}`);
 });
 
-test('水線面の二次モーメント: 幅 b・長さ l の箱なら l b³ / 12', () => {
-  // 船体中央の平行部の 1 m 分（幅 11.2 m）を数値積分と比べる代わりに、全長の積分が中央部の値を上限に持つことを確かめる
+test('水線面の二次モーメント: 水線面を 2 次元に刻んだ ∬ x² dA と一致し、同じ長さ・幅の箱 l b³ / 12 より小さい', () => {
+  // waterplaneInertia は断面ごとの (2/3) b³ の和。式を使わずに水線面の内側の点の x² を足した値と比べる
   const I = H.waterplaneInertia(DESIGN_DRAFT);
+  let ref = 0;
+  const dx = 0.02, dz = 0.1;
+  for (let z = H.Z_MIN + dz / 2; z < H.Z_MAX; z += dz) {
+    const b = H.halfBreadth(z, DESIGN_DRAFT);
+    if (b > 0) for (let x = -H.B / 2 + dx / 2; x < H.B / 2; x += dx) if (Math.abs(x) <= b) ref += x * x * dx * dz;
+  }
+  assert.ok(Math.abs(I / ref - 1) < 0.005, `I_T ${I} / ∬x²dA ${ref}`);
   const box = (H.L * H.B ** 3) / 12;
   assert.ok(I > 0.4 * box && I < box, `I_T ${I} / 箱 ${box}`);
+  // 水線より上（船外）なら 0、幅が 0 の船底より下も 0
+  assert.equal(H.waterplaneInertia(H.Y_MAX + 1), 0);
+  assert.equal(H.waterplaneInertia(-0.1), 0);
+});
+
+test('復原性: 傾斜試験（重心の高さに片舷へ重りを載せる）で測った GM が、KG の元にした GM と合う', async () => {
+  // tan φ = w·x / (Δ·GM)。GM は SHIP_COM の式の中の値ではなく、浮力セルと剛体の釣り合いから出てくる値を見る
+  const sim = await createSim();
+  run(sim, 2);
+  const w = 30e3, x = 5;
+  sim.setWater({ mass: w, com: [x, SHIP_COM[1], SHIP_COM[2]], inertia: [0, 0, 0, 0, 0, 0] });
+  run(sim, 40);
+  const phi = (Math.abs(sim.state().rollDeg) * Math.PI) / 180;
+  assert.ok(sim.state().rollDeg < 0, '重りの舷（+x、左舷）へ傾く');
+  const gm = (w * x) / ((SHIP_MASS + w) * Math.tan(phi));
+  assert.ok(Math.abs(gm / GM - 1) < 0.15, `傾斜試験の GM ${gm} / 設定 ${GM}`);
 });
 
 test('静水: 無傷なら設計喫水で水平に浮き続ける', async () => {
