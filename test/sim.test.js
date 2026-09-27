@@ -1,20 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSim, SEABED_Y, DESIGN_DRAFT, SHIP_MASS, ENVELOPE_VOLUME, RHO } from '../src/sim.js';
+import { createSim, SEABED_Y, DESIGN_DRAFT, SHIP_MASS, ENVELOPE_VOLUME, RHO, SHIP_COM, GM } from '../src/sim.js';
 import * as MP from '../src/massprops.js';
 import * as W from '../src/waves.js';
 import * as Lo from '../src/layout.js';
 import * as H from '../src/hull.js';
 
 const run = (sim, sec) => { for (let i = 0; i < sec * 60; i++) sim.step(); };
-// 部屋 name を水位 level（船体座標 y）まで満たしたときの水の質量特性（格子で数値積分）
-function roomWater(names, level = Infinity, dx = 0.25) {
+// 部屋 name を水位 level（船体座標 y）まで満たしたときの水の質量特性（格子で数値積分）。side = 1 なら左舷（+x）の半分だけ
+function roomWater(names, level = Infinity, { dx = 0.4, side = 0 } = {}) {
   let m = 0; const s1 = [0, 0, 0], s2 = [0, 0, 0, 0, 0, 0];
   const rooms = names.map((n) => Lo.ROOMS.find((r) => r.name === n));
-  for (let x = -H.B / 2; x < H.B / 2; x += dx) for (let y = 0; y < Lo.HOUSE.top; y += dx) for (let z = H.Z_MIN; z < H.Z_MAX; z += dx) {
+  for (let x = -H.B / 2; x < H.B / 2; x += dx) for (let y = 0; y < H.Y_MAX; y += dx) for (let z = H.Z_MIN; z < H.Z_MAX; z += dx) {
     const [cx, cy, cz] = [x + dx / 2, y + dx / 2, z + dx / 2];
-    if (cy > level) continue;
-    if (!(H.inside(cx, cy, cz) || Lo.inHouse(cx, cy, cz))) continue;
+    if (cy > level || cx * side < 0) continue;
+    if (!H.inside(cx, cy, cz)) continue;
     if (!rooms.some((r) => Lo.inBox(r.box, cx, cy, cz))) continue;
     const dm = RHO * dx ** 3;
     m += dm; s1[0] += dm * cx; s1[1] += dm * cy; s1[2] += dm * cz;
@@ -46,9 +46,48 @@ test('質量特性: 点群のモーメントから重心まわりの慣性', () 
   assert.deepEqual(w.inertia, [0, 2, 2, -0, -0, -0]);
 });
 
-test('船型: 外殻の体積は予備浮力を持ち、設計喫水の排水量が船の重さ', () => {
-  assert.ok(ENVELOPE_VOLUME * RHO > SHIP_MASS * 1.8, `外殻 ${ENVELOPE_VOLUME} m³`);
-  assert.ok(SHIP_MASS > 300e3 && SHIP_MASS < 500e3, `${SHIP_MASS}`);
+test('艦型: 外殻の体積は予備浮力を持ち、設計喫水の排水量（公試排水量 3,048 t の ±3%）が艦の重さ', () => {
+  assert.ok(ENVELOPE_VOLUME * RHO > SHIP_MASS * 2, `外殻 ${ENVELOPE_VOLUME} m³`);
+  assert.ok(Math.abs(SHIP_MASS / 3048e3 - 1) < 0.03, `${SHIP_MASS}`);
+});
+
+test('艦型: 重心の高さ KG = KM − GM（駆逐艦の典型 4〜5 m）、前後は浮心の位置', () => {
+  const cells = H.buildCells(0.25);
+  const d = H.displacement(cells, 0.25, DESIGN_DRAFT);
+  const km = d.kb + H.waterplaneInertia(DESIGN_DRAFT) / d.v;
+  assert.ok(Math.abs(SHIP_COM[1] - (km - GM)) < 0.08, `KG ${SHIP_COM[1]} vs KM − GM ${km - GM}`);
+  assert.ok(SHIP_COM[1] > 4 && SHIP_COM[1] < 5, `KG ${SHIP_COM[1]}`);
+  assert.ok(Math.abs(SHIP_COM[2] - d.lcb) < 0.3, `LCG ${SHIP_COM[2]} LCB ${d.lcb}`);
+});
+
+test('水線面の二次モーメント: 水線面を 2 次元に刻んだ ∬ x² dA と一致し、同じ長さ・幅の箱 l b³ / 12 より小さい', () => {
+  // waterplaneInertia は断面ごとの (2/3) b³ の和。式を使わずに水線面の内側の点の x² を足した値と比べる
+  const I = H.waterplaneInertia(DESIGN_DRAFT);
+  let ref = 0;
+  const dx = 0.02, dz = 0.1;
+  for (let z = H.Z_MIN + dz / 2; z < H.Z_MAX; z += dz) {
+    const b = H.halfBreadth(z, DESIGN_DRAFT);
+    if (b > 0) for (let x = -H.B / 2 + dx / 2; x < H.B / 2; x += dx) if (Math.abs(x) <= b) ref += x * x * dx * dz;
+  }
+  assert.ok(Math.abs(I / ref - 1) < 0.005, `I_T ${I} / ∬x²dA ${ref}`);
+  const box = (H.L * H.B ** 3) / 12;
+  assert.ok(I > 0.4 * box && I < box, `I_T ${I} / 箱 ${box}`);
+  // 水線より上（船外）なら 0、幅が 0 の船底より下も 0
+  assert.equal(H.waterplaneInertia(H.Y_MAX + 1), 0);
+  assert.equal(H.waterplaneInertia(-0.1), 0);
+});
+
+test('復原性: 傾斜試験（重心の高さに片舷へ重りを載せる）で測った GM が、KG の元にした GM と合う', async () => {
+  // tan φ = w·x / (Δ·GM)。GM は SHIP_COM の式の中の値ではなく、浮力セルと剛体の釣り合いから出てくる値を見る
+  const sim = await createSim();
+  run(sim, 2);
+  const w = 30e3, x = 5;
+  sim.setWater({ mass: w, com: [x, SHIP_COM[1], SHIP_COM[2]], inertia: [0, 0, 0, 0, 0, 0] });
+  run(sim, 40);
+  const phi = (Math.abs(sim.state().rollDeg) * Math.PI) / 180;
+  assert.ok(sim.state().rollDeg < 0, '重りの舷（+x、左舷）へ傾く');
+  const gm = (w * x) / ((SHIP_MASS + w) * Math.tan(phi));
+  assert.ok(Math.abs(gm / GM - 1) < 0.15, `傾斜試験の GM ${gm} / 設定 ${GM}`);
 });
 
 test('静水: 無傷なら設計喫水で水平に浮き続ける', async () => {
@@ -62,27 +101,36 @@ test('静水: 無傷なら設計喫水で水平に浮き続ける', async () => 
 test('復原性: 横に傾けても元に戻る（GM が正）', async () => {
   const sim = await createSim();
   run(sim, 3);
-  sim.body.applyTorqueImpulse({ x: 0, y: 0, z: 2.2e6 }, true);
+  sim.body.applyTorqueImpulse({ x: 0, y: 0, z: 4.5e7 }, true);
   run(sim, 1.5);
   assert.ok(Math.abs(sim.state().rollDeg) > 4, `傾いた ${sim.state().rollDeg}`);
   run(sim, 40);
   assert.ok(Math.abs(sim.state().rollDeg) < 0.5, `戻った ${sim.state().rollDeg}`);
 });
 
-test('浸水: 第1船倉が満水なら船首が沈むが、浮き続ける（1 区画浸水に耐える）', async () => {
+test('浸水: 隣り合う 2 つの缶室が外の喫水まで浸水しても、艦首が沈むが浮き続ける（2 区画浸水に耐える）', async () => {
   const sim = await createSim();
   run(sim, 2);
-  sim.setWater(roomWater(['第1船倉'], 3.4)); // 外の喫水程度まで
+  sim.setWater(roomWater(['第1缶室', '第2缶室'], DESIGN_DRAFT + 0.6)); // 沈下した後の外の喫水程度まで
   run(sim, 40);
   const s = sim.state();
-  assert.ok(s.pitchDeg < -0.8, `船首トリム ${s.pitchDeg}`);
-  assert.ok(s.submerged < 0.9 && s.y > -8, `浮いている y=${s.y}`);
+  assert.ok(s.pitchDeg < -0.3, `艦首トリム ${s.pitchDeg}`);
+  assert.ok(s.submerged < 0.75 && s.y > -DESIGN_DRAFT - 2, `浮いている y=${s.y} submerged=${s.submerged}`);
+});
+
+test('浸水: 機関区画（缶室 3・機械室 2）が全部満水でも、前後の区画の浮力で沈まない', async () => {
+  const sim = await createSim();
+  run(sim, 2);
+  sim.setWater(roomWater(['第1缶室', '第2缶室', '第3缶室', '前部機械室', '後部機械室'], DESIGN_DRAFT + 1.2));
+  run(sim, 60);
+  const s = sim.state();
+  assert.ok(s.submerged < 0.95 && s.y > -H.D, `浮いている y=${s.y} submerged=${s.submerged}`);
 });
 
 test('浸水: 片舷に偏った水で、その舷に傾く', async () => {
   const sim = await createSim();
   run(sim, 2);
-  sim.setWater(roomWater(['船室 左1', '船室 左2', '船室 左3']));
+  sim.setWater(roomWater(['後部兵員室 1', '後部兵員室 2', '士官室'], Infinity, { side: 1 }));
   run(sim, 30);
   assert.ok(sim.state().rollDeg < -1, `左舷（+x）が下がる roll=${sim.state().rollDeg}`);
 });
@@ -93,7 +141,7 @@ test('沈没: 船内がほぼ満水なら沈んで海底に着き、数値が発
   sim.setWater(roomWater(Lo.ROOMS.map((r) => r.name)));
   run(sim, 120);
   const s = sim.state();
-  assert.ok(s.y < SEABED_Y + 6, `海底付近 y=${s.y}`);
+  assert.ok(s.y < SEABED_Y + 15, `海底付近 y=${s.y}`);
   assert.ok(Number.isFinite(s.pitchDeg) && Number.isFinite(s.rollDeg));
 });
 
@@ -108,8 +156,8 @@ test('波: 波の中では上下に揺れ、発散しない', async () => {
 
 test('浸水: 1 回ごとの増分が閾値より小さくても、積み重なった水の質量は剛体に反映される', async () => {
   const sim = await createSim();
-  // 毎フレーム 17 kg（約 1 m³/min。閾値 = 総質量の 0.1% ≈ 400 kg より小さい）ずつ増える遅い浸水
-  for (let i = 1; i <= 600; i++) sim.setWater({ mass: 17 * i, com: [0, 1.5, 7], inertia: [0, 0, 0, 0, 0, 0] });
+  // 毎フレーム 17 kg（約 1 m³/min。閾値 = 総質量の 0.1% ≈ 3 t より小さい）ずつ増える遅い浸水
+  for (let i = 1; i <= 600; i++) sim.setWater({ mass: 17 * i, com: [0, 2.5, 7], inertia: [0, 0, 0, 0, 0, 0] });
   const applied = sim.state().totalMass - SHIP_MASS;
   assert.ok(Math.abs(applied - 17 * 600) <= SHIP_MASS * 1e-3, `反映された水 ${applied} kg / 受け取った水 ${17 * 600} kg`);
   assert.ok(Math.abs(sim.body.mass() - sim.state().totalMass) < 1, '重力に使う質量と Rapier の質量が一致');
@@ -123,10 +171,10 @@ test('浸水: 非有限の水の質量特性は捨て、後から来た正しい
   sim.setWater({ mass: 1e5, com: [0, 1, 1], inertia: [1, NaN, 1, 0, 0, 0] });
   const c = sim.body.localCom();
   assert.ok([c.x, c.y, c.z].every(Number.isFinite), `重心 ${JSON.stringify(c)}`);
-  sim.setWater({ mass: 1e5, com: [0, 1, 1], inertia: [1, 1, 1, 0, 0, 0] });
+  sim.setWater({ mass: 1e6, com: [0, 2, 1], inertia: [1, 1, 1, 0, 0, 0] });
   run(sim, 1);
   const s = sim.state();
-  assert.ok(Math.abs(s.totalMass - (SHIP_MASS + 1e5)) < 1, `${s.totalMass}`);
+  assert.ok(Math.abs(s.totalMass - (SHIP_MASS + 1e6)) < 1, `${s.totalMass}`);
   assert.ok(s.y < -DESIGN_DRAFT - 0.1, `水の重さで沈む y=${s.y}`);
 });
 
@@ -145,7 +193,7 @@ test('流体への見かけの重力: 傾いて落ち着いた船では、低い
   // 姿勢を瞬間的に書き換えると浮力が急変して並進加速度が混ざるので、水の偏りで静かに傾けて落ち着かせてから見る
   const sim = await createSim();
   run(sim, 2);
-  sim.setWater(roomWater(['船室 左1', '船室 左2', '船室 左3']));
+  sim.setWater(roomWater(['後部兵員室 1', '後部兵員室 2', '士官室'], Infinity, { side: 1 }));
   run(sim, 30);
   const roll = sim.state().rollDeg;
   assert.ok(roll < -1, `左舷（+x）が下がる roll=${roll}`);
@@ -154,7 +202,7 @@ test('流体への見かけの重力: 傾いて落ち着いた船では、低い
   assert.ok(g.x > 0 && Math.abs(g.x - expect) < 0.3, `重力の x 成分は +x（低い左舷）向きで g·sin(傾斜) に近い: ${g.x} vs ${expect}`);
   const sim2 = await createSim();
   run(sim2, 2);
-  sim2.setWater(roomWater(['第1船倉'], 3.4));
+  sim2.setWater(roomWater(['第1缶室', '第2缶室'], DESIGN_DRAFT + 0.6));
   run(sim2, 40);
   const pitch = sim2.state().pitchDeg;
   assert.ok(pitch < -0.5, `船首が下がる pitch=${pitch}`);

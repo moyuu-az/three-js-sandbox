@@ -19,10 +19,10 @@
 import { createProfile } from '../src/ui/profile.js';
 import * as Lo from '../src/layout.js';
 import { breachAt } from '../src/shipgrid.js';
-const states = { D1: true, D2: false, D3: false, o1: true, o2: true, o3: true, o4: false, o5: true };
+const states = { D1: true, D3: true, o1: true, o2: true, o4: true, o8: false };
 const p = createProfile(document.getElementById('profile'), { onDoor: (id) => { states[id] = !states[id]; draw(); } });
-const fills = Lo.ROOMS.map((r, i) => [0.1, 0.8, 0.45, 0.3, 0.6, 0, 0.2, 1, 0.05, 0.9, 0, 0.15, 0][i]);
-function draw() { p.update({ fills, hot: fills.map((f) => f > 0.5), waterline: [2.4, 3.1], doorStates: states, breaches: [breachAt(3.5, 1.8, 7.8, 1.6, 1.2)] }); }
+const fills = Lo.ROOMS.map((r, i) => [0.1, 0.8, 0.45, 0.3, 0.6, 0, 0.2, 1, 0.05, 0.9, 0, 0.15, 0][i % 13]);
+function draw() { p.update({ fills, hot: fills.map((f) => f > 0.5), waterline: [4.0, 4.6], doorStates: states, breaches: [breachAt(5, 2.0, 12, 7, 3.5)] }); }
 draw();
 </script>
 </body>

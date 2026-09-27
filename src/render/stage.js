@@ -33,13 +33,13 @@ export async function createStage(container, { seabedY, allowWebGL = false }) {
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 6000);
-  camera.position.set(34, 13, 30);
+  camera.position.set(95, 38, 85);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  controls.maxDistance = 220;
+  controls.maxDistance = 520;
   controls.minDistance = 4;
-  controls.target.set(0, 2, 0);
+  controls.target.set(0, 3, 0);
 
   // ---------- 空・太陽・環境光 ----------
   // 太陽は既定のカメラ（右舷前方の上）の背後寄り: 逆光だと海面の照り返しが画面を白く覆う
@@ -64,7 +64,7 @@ export async function createStage(container, { seabedY, allowWebGL = false }) {
   const sun = new THREE.DirectionalLight(0xfff0d8, 3.2);
   sun.castShadow = true;
   sun.shadow.mapSize.set(4096, 4096);
-  Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 160 });
+  Object.assign(sun.shadow.camera, { left: -75, right: 75, top: 75, bottom: -75, near: 1, far: 320 });
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.03;
   scene.add(sun, sun.target);
@@ -92,7 +92,7 @@ export async function createStage(container, { seabedY, allowWebGL = false }) {
   const rockMat = new THREE.MeshStandardNodeMaterial({ color: 0x4b4a44, roughness: 0.95 });
   for (let i = 0; i < 60; i++) {
     const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5 + Math.random() * 2.5, 0), rockMat);
-    const a = Math.random() * Math.PI * 2, d = 25 + Math.random() * 160;
+    const a = Math.random() * Math.PI * 2, d = 75 + Math.random() * 200;
     r.position.set(Math.cos(a) * d, seabedY + 0.2, Math.sin(a) * d);
     r.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
     r.scale.y = 0.5;
@@ -102,7 +102,7 @@ export async function createStage(container, { seabedY, allowWebGL = false }) {
 
   // ---------- 霧（空気中はうっすら、水中は濃い青） ----------
   const airFog = new THREE.FogExp2(0xbfd3e0, 0.0011);
-  const waterFog = new THREE.FogExp2(0x0e4a5e, 0.022); // 水中の見通しは 40 m 程度（船の全長が見える）
+  const waterFog = new THREE.FogExp2(0x0e4a5e, 0.011); // 水中の見通しは 80 m 程度（全長 130 m の船の半分以上が見える）
   scene.fog = airFog;
   function setUnderwater(under) {
     scene.fog = under ? waterFog : airFog;

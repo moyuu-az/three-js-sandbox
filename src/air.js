@@ -42,8 +42,8 @@ export function roomLinks(grid, nRooms) {
   return [...map].map(([key, pts]) => ({ a: Math.floor(key / 64), b: key % 64, pts: Float32Array.from(pts) }));
 }
 
-// 外板の点の種類（強度の区分）。甲板室の部屋は甲板室の壁、上向きの面は上甲板、それ以外は外板。n: 船外向きの面の向き
-export const surfaceKind = (room, n) => (Lo.ROOMS[room]?.comp === 'DH' ? 'house' : n[1] > 0.5 ? 'deck' : 'hull');
+// 外板の点の種類（強度の区分）。上向きの面は甲板（上甲板・船首楼甲板）、それ以外は外板（舷側・船底・船首楼の後端壁）。n: 船外向きの面の向き
+export const surfaceKind = (room, n) => (n[1] > 0.5 ? 'deck' : 'hull');
 
 const STRIDE = 7; // x, y, z, nx, ny, nz, 強度 [Pa]
 /**
@@ -73,8 +73,8 @@ export function envelopePoints(grid, nRooms, kindOf) {
 }
 
 /**
- * 外板の点の強度（layout.STRENGTH × 場所ごとのばらつき ±15%）。閉じた開口（ハッチ蓋・扉・通風筒の蓋）の周りは最も弱く、
- * 破れたらその開口が開く。甲板室の部屋は甲板室の壁、上向きの面は上甲板、それ以外は外板。
+ * 外板の点の強度（layout.STRENGTH × 場所ごとのばらつき ±15%）。閉じた開口（ハッチ蓋・扉・給気口の蓋）の周りは最も弱く、
+ * 破れたらその開口が開く。上向きの面は甲板、それ以外は外板。
  * closed: 閉じている layout.SEA_OPENINGS の要素。scale: 強度の倍率（UI）
  */
 export function strengthOf(closed, scale = 1) {

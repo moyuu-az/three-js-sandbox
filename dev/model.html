@@ -25,12 +25,12 @@ import * as W from '../src/waves.js';
 const q = new URLSearchParams(location.search);
 const log = (m) => { document.getElementById('s').textContent += m + '\n'; };
 try {
-  const stage = await createStage(document.getElementById('app'), { seabedY: -38, allowWebGL: true });
+  const stage = await createStage(document.getElementById('app'), { seabedY: -60, allowWebGL: true });
   log('backend: ' + (stage.renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL'));
   const t0 = performance.now();
-  const model = buildShipModel({ h: 0.3, draft: 2.6 });
+  const model = buildShipModel({ h: 0.5, draft: 4.14 });
   log('model ms ' + (performance.now() - t0).toFixed(0));
-  model.group.position.y = -2.6;
+  model.group.position.y = -4.14;
   stage.scene.add(model.group);
   const ocean = createOcean(stage.scene, { sunDir: stage.sunDir });
   ocean.setWaves(W.makeWaves(0.9, 5.5));
@@ -38,7 +38,7 @@ try {
   model.cut.enabled = q.has('cut');
   if (q.has('cut')) model.cut.clippingPlanes[0].set(new THREE.Vector3(-1, 0, 0), 0);
   const pipeline = stage.createPipeline((c) => c);
-  const cam = (q.get('cam') ?? '34,13,30').split(',').map(Number);
+  const cam = (q.get('cam') ?? '95,38,85').split(',').map(Number);
   stage.camera.position.set(...cam);
   let t = 0;
   window.draw = () => {

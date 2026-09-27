@@ -24,8 +24,8 @@
     <div class="brand">
       <svg viewBox="0 0 24 24" class="logo" aria-hidden="true"><path d="M3 15h18l-2.5 4.5H5.5z" /><path d="M7 15V9h6v6M13 11h4v4" /><path d="M9 9V6h2v3" /></svg>
       <div>
-        <div class="title">KAIYO MARU <span class="muted">浸水シミュレータ</span></div>
-        <div class="sub">全長 30 m・5 水密区画・GPU 流体（MLS-MPM）</div>
+        <div class="title">駆逐艦 島風 <span class="muted">浸水シミュレータ</span></div>
+        <div class="sub">全長 129.5 m・15 水密区画・GPU 流体（MLS-MPM）</div>
       </div>
     </div>
     <div class="clock"><span id="clock">00:00.0</span><span id="status" class="badge ok">航行中</span></div>
@@ -48,18 +48,18 @@
     </nav>
 
     <section data-pane="attack" class="pane on">
-      <div class="hint">船体をクリックすると、その位置に魚雷を撃ち込みます。</div>
-      <label class="field">破口の幅 <output id="breachWOut">1.6 m</output>
-        <input type="range" id="breachW" min="0.6" max="4" step="0.1" value="1.6" /></label>
-      <label class="field">破口の高さ <output id="breachHOut">1.2 m</output>
-        <input type="range" id="breachH" min="0.4" max="2.5" step="0.1" value="1.2" /></label>
+      <div class="hint">艦体をクリックすると、その位置に魚雷を撃ち込みます。</div>
+      <label class="field">破口の幅 <output id="breachWOut">5.0 m</output>
+        <input type="range" id="breachW" min="1" max="10" step="0.1" value="5" /></label>
+      <label class="field">破口の高さ <output id="breachHOut">3.0 m</output>
+        <input type="range" id="breachH" min="0.6" max="5" step="0.1" value="3" /></label>
       <div class="group-title">シナリオ</div>
       <div class="scenarios" id="scenarios"></div>
     </section>
 
     <section data-pane="doors" class="pane">
-      <div class="hint">水密扉を閉めると区画どうしの水の行き来が止まります。甲板の開口は、沈んで海面下になると水の入口になります。</div>
-      <div class="group-title">水密扉</div>
+      <div class="hint">水密扉・水密ハッチは戦闘配置で全部閉じています。開けると区画どうしで水が行き来します。露天甲板の開口（ハッチ・天窓・缶室の給気口）は、沈んで海面下になると水の入口になります。</div>
+      <div class="group-title">水密扉・水密ハッチ</div>
       <div id="wtDoors" class="toggles"></div>
       <div class="group-title">船外への開口</div>
       <div id="seaOpenings" class="toggles"></div>
@@ -76,9 +76,9 @@
       <div class="group-title">甲板を外す（透視・断面）</div>
       <div class="seg wide" id="peel">
         <button data-p="none" class="on">なし</button>
-        <button data-p="house" title="甲板室・船橋・マストを外す">上部構造</button>
-        <button data-p="deck" title="上甲板を外して居住区・機関室を上から見る">上甲板</button>
-        <button data-p="deck2" title="第 2 甲板も外して船倉を上から見る">第2甲板</button>
+        <button data-p="house" title="艦橋・煙突・砲・魚雷発射管・マストを隠す">上部構造</button>
+        <button data-p="deck" title="船首楼と上甲板を外して居住区・缶室・機械室を上から見る">上甲板</button>
+        <button data-p="deck2" title="下甲板も外して弾薬庫・倉庫を上から見る">下甲板</button>
       </div>
       <label class="check"><input type="checkbox" id="labelsOn" checked /> 部屋の名前・浸水率・空気圧を表示</label>
       <div class="group-title">船内の水</div>
@@ -98,9 +98,9 @@
       <label class="check"><input type="checkbox" id="follow" checked /> 船を追いかける</label>
       <div class="group-title">画質（GPU 負荷）</div>
       <select id="quality" aria-label="画質（GPU 負荷）">
-        <option value="light">軽量（粒子 13 万）</option>
-        <option value="standard">標準（粒子 26 万）</option>
-        <option value="high">高精細（粒子 39 万）</option>
+        <option value="light">軽量（格子 0.6 m・粒子 23 万）</option>
+        <option value="standard">標準（格子 0.5 m・粒子 39 万）</option>
+        <option value="high">高精細（格子 0.42 m・粒子 52 万）</option>
       </select>
       <div class="hint small">変更すると再読み込みします。</div>
     </section>
@@ -113,7 +113,7 @@
       <label class="check"><input type="checkbox" id="ruptureOn" checked /> 空気圧・水圧で外板が破れる</label>
       <label class="field">構造の強さ <output id="strengthOut">×1.0</output>
         <input type="range" id="strength" min="0.3" max="2" step="0.1" value="1" /></label>
-      <div class="hint">閉じ込められた空気は水に押されて縮み、流入を押し返します（エアクッション）。内外の圧力差が強度を超えると、閉じたハッチ・扉 → 甲板室の壁 → 上甲板 → 外板の順に破れ、空気が抜けて一気に浸水します。</div>
+      <div class="hint">閉じ込められた空気は水に押されて縮み、流入を押し返します（エアクッション）。内外の圧力差が強度を超えると、閉じたハッチ・扉 → 甲板 → 外板（高張力鋼）の順に破れ、空気が抜けて一気に浸水します。</div>
     </section>
   </aside>
 
@@ -150,12 +150,12 @@
       <h2>操作説明</h2>
       <ul>
         <li><b>ドラッグ</b>: 視点の回転 ／ <b>右ドラッグ</b>: 平行移動 ／ <b>ホイール</b>: ズーム</li>
-        <li><b>船体をクリック</b>: その位置に魚雷。破口から海水が噴き込みます</li>
+        <li><b>艦体をクリック</b>: その位置に魚雷。破口から海水が噴き込みます</li>
         <li><b>W A S D</b>: カメラを前後左右に移動 ／ <b>Q E</b>: 下降・上昇 ／ <b>Shift</b>: 速く</li>
         <li><b>透視表示</b>: カメラの側の外板・甲板・壁だけを透かし、船内の部屋と水を立体のまま見ます（回り込むと透かす面が変わります）。<b>甲板を外す</b>で上から部屋に入れます</li>
-        <li><b>断面表示</b>: 船の中心線で縦に切った側面図です</li>
+        <li><b>断面表示</b>: 艦の中心線で縦に切った側面図です</li>
         <li><b>空気圧</b>: 閉じ込められた空気は水に押されて縮み、流入を押し返します。内外の圧力差が強度を超えると外板や閉じたハッチが破れます（環境タブで強さを変えられます）</li>
-        <li><b>水密扉</b>: 左パネルか下の区画図の扉アイコンで開閉。閉めれば浸水は区画内に留まります</li>
+        <li><b>水密区画</b>: 島風の寸法に合わせ、14 枚の水密隔壁で 15 区画に分けています（缶室 3・機械室 2 を含む）。水密扉は戦闘配置で閉じており、左パネルか下の区画図の扉アイコンで開閉できます</li>
         <li>水は GPU 上の粒子法（MLS-MPM）で解いており、扉・ハッチ・階段を通って実際に流れます。船の傾きや揺れは船内の水に見かけの力として伝わり、水の重さと重心は船の運動に戻ります</li>
       </ul>
       <button class="btn" id="helpClose">閉じる</button>
