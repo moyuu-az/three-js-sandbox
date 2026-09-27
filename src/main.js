@@ -295,8 +295,7 @@ async function main() {
     const peelY = view !== 'exterior' ? PEEL[peel] : 1e3;
     const local = ray.intersectObjects(model.hullMeshes).map((hit) => {
       const p = model.group.worldToLocal(hit.point.clone());
-      const ghost = view === 'xray' && hit.face && hit.face.normal.dot(tmp.copy(camLocal).sub(p)) > 0;
-      return ghost || p.y > peelY || (cutSide && p.x * cutSide > 0.01) ? null : p;
+      return model.isGhost(hit, p) || p.y > peelY || (cutSide && p.x * cutSide > 0.01) ? null : p;
     }).find((p) => p);
     if (!local) return;
     launch([local.x, local.y, local.z], local.x >= 0 ? 1 : -1);
@@ -544,14 +543,15 @@ async function main() {
     }
 
     // 5) 描画の更新
-    model.update(real, speed && !(wm && wm.mass > 0) ? 3 : 0); // 浸水したら機関を止める
+    model.update(real, wm && wm.mass > 0 ? 0 : 3 * speed); // 浸水したら機関を止める。回転は再生速度に合わせる（update は実時間で進む）
     updateTorpedo(dt);
     if (!run && salvo.length && simTime >= salvoAt && dt > 0) fire(salvo.shift());
     flash.intensity *= Math.exp(-10 * Math.max(dt, 1 / 240));
     fx.emitOpenings(dt, ops, flows, (p) => sim.toWorld(p));
     fx.emitAir(dt, ops, airFlows, (p) => sim.toWorld(p));
     fx.emitWaterline(dt, sim.body.linvel().y);
-    for (smokeDebt += 14 * dt; smokeDebt >= 1; smokeDebt--) for (const f of model.funnelTops) {
+    // 煙突は上部構造（top）の一部。「上部構造」を隠している間は煙も出さない（宙から煙が出て見える）
+    for (smokeDebt += 14 * dt; smokeDebt >= 1; smokeDebt--) if (model.top.visible) for (const f of model.funnelTops) {
       const ft = f.getWorldPosition(tmp);
       if (ft.y > sim.sea(ft.x, ft.z) + 0.5) fx.emit(P.SMOKE, ft.x, ft.y, ft.z, 0, 1.2, 0, 1.6);
     }

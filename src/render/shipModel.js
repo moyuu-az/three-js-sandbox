@@ -233,9 +233,13 @@ export function buildShipModel({ h, draft }) {
 
   // ---------- 隔壁・仕切り（layout.PLATES の z の板）。扉・ハッチの位置は穴にする ----------
   const overlap = (a, b) => a && b && Math.min(a[1], b[1]) > Math.max(a[0], b[0]);
+  // 高さも板の範囲と重なる扉だけ（z = K3 には水密隔壁の扉 D2 と、その上の船首楼の仕切り扉 c1 が同じ z にある。
+  // 範囲外の穴を渡すと、押し出しが穴の側面だけを宙に作り、もう一方の板の穴の側面と重なってちらつく）
+  const yRange = (r, z) => [Lo.resolveY(r[0], z), Lo.resolveY(r[1], z)];
   const doorHoles = (p) => Lo.DOORS.filter((d) => {
     const r = d.box[p.axis];
     if (!(p.at >= r[0] && p.at <= r[1])) return false;
+    if (p.axis === 'z' && !overlap(yRange(d.box.y, p.at), yRange(p.span.y, p.at))) return false;
     return ['x', 'z'].filter((a) => a !== p.axis).every((a) => !p.span[a] || overlap(d.box[a], p.span[a]));
   });
   for (const p of Lo.PLATES.filter((q) => q.axis === 'z')) {
@@ -275,7 +279,7 @@ export function buildShipModel({ h, draft }) {
     cut.add(pivot);
     animated(id, pivot, openSign * 1.75, 'y', open);
   }
-  // ハッチ: コーミング（縁の立ち上がり）と、後ろの辺で持ち上がる蓋
+  // ハッチ: コーミング（縁の立ち上がり）と、前の辺を軸に後ろの辺が持ち上がる蓋（軸は +x 回りなので開く角度は正。負だと蓋が穴の中へ垂れ下がる）
   function hatchLid(id, x, y, z, a, b, open, coaming = 0.45, material = M.gray) {
     for (const [w, d, cx, cz] of [[2 * a + 0.1, 0.05, x, z - b - 0.025], [2 * a + 0.1, 0.05, x, z + b + 0.025], [0.05, 2 * b, x - a - 0.025, z], [0.05, 2 * b, x + a + 0.025, z]]) B.add(material, box(w, coaming, d, cx, y + coaming / 2, cz));
     const pivot = new THREE.Group();
@@ -285,7 +289,7 @@ export function buildShipModel({ h, draft }) {
     lid.castShadow = true;
     pivot.add(lid);
     cut.add(pivot);
-    if (id) animated(id, pivot, -1.9, 'x', open);
+    if (id) animated(id, pivot, 1.9, 'x', open);
   }
   for (const d of Lo.DOORS.filter((x) => x.wt)) {
     const zc = (d.box.z[0] + d.box.z[1]) / 2, xc = (d.box.x[0] + d.box.x[1]) / 2;
@@ -313,10 +317,11 @@ export function buildShipModel({ h, draft }) {
     const [cx, cy, cz] = o.center, [a, b] = o.half;
     if (o.kind === 'door') { hingedDoor(o.id, 2 * a, 2 * b, V3(cx - a, cy - b, cz - 0.06), 1, M.gray, o.open); continue; }
     if (o.kind === 'vent') {
-      // 缶室の給気口: 煙突の脇の箱形の給気筒。蓋は上の口
+      // 缶室の給気口: 煙突の脇の箱形の給気筒。蓋は上の口。
+      // 浸水の入口（SEA_OPENINGS）なので上部構造（top）には入れない: 入れると「上部構造」を隠したとき、甲板の穴の上に蓋だけが浮く
       const hgt = 2.4;
-      for (const [w, d, x, z] of [[2 * a + 0.2, 0.1, cx, cz - b - 0.05], [2 * a + 0.2, 0.1, cx, cz + b + 0.05], [0.1, 2 * b, cx - a - 0.05, cz], [0.1, 2 * b, cx + a + 0.05, cz]]) BT.add(M.gray, box(w, hgt, d, x, cy + hgt / 2, z));
-      for (let y = cy + 0.5; y < cy + hgt - 0.3; y += 0.3) BT.add(M.dark, box(0.02, 0.06, 2 * b, cx + Math.sign(cx) * (a + 0.11), y, cz)); // 外側のルーバー
+      for (const [w, d, x, z] of [[2 * a + 0.2, 0.1, cx, cz - b - 0.05], [2 * a + 0.2, 0.1, cx, cz + b + 0.05], [0.1, 2 * b, cx - a - 0.05, cz], [0.1, 2 * b, cx + a + 0.05, cz]]) B.add(M.gray, box(w, hgt, d, x, cy + hgt / 2, z));
+      for (let y = cy + 0.5; y < cy + hgt - 0.3; y += 0.3) B.add(M.dark, box(0.02, 0.06, 2 * b, cx + Math.sign(cx) * (a + 0.11), y, cz)); // 外側のルーバー
       hatchLid(o.id, cx, cy + hgt - 0.1, cz, a, b, o.open, 0.1, M.gray);
       continue;
     }
@@ -335,7 +340,11 @@ export function buildShipModel({ h, draft }) {
     for (const s of [-1, 1]) B.add(M.boiler, new THREE.CylinderGeometry(0.4, 0.4, len(b.z) - 0.2, 14).rotateX(Math.PI / 2).translate(s * 1.5, H.TANK_TOP + 0.5, zc)); // 水ドラム
     for (let k = 0; k < 3; k++) B.add(M.dark, box(0.5, 0.45, 0.06, -1 + k, H.TANK_TOP + 1.6, b.z[0] - 0.02)); // 焚口
     const f = i < 2 ? f1 : f2;
-    B.add(M.steel, rod(V3(0, top - 0.2, zc), V3(0, upY(f.z) - 0.05, f.z + (i === 0 ? 0.9 : i === 1 ? -0.9 : 0)), 0.75, 16)); // 煙路
+    // 煙路。斜めの部分と、甲板の下の縦の部分に分ける: 斜めの円柱のまま甲板まで伸ばすと、傾いた端面の縁（最大で半径 0.75 m 上）が
+    // 甲板から突き出て、上部構造を隠したときに見える
+    const ez = f.z + (i === 0 ? 0.9 : i === 1 ? -0.9 : 0), ey = upY(f.z);
+    B.add(M.steel, rod(V3(0, top - 0.2, zc), V3(0, ey - 0.9, ez), 0.75, 16));
+    B.add(M.steel, rod(V3(0, ey - 0.9, ez), V3(0, ey - 0.1, ez), 0.75, 16));
     B.add(M.lamp, box(0.4, 0.03, 0.4, 3.3, upY(zc) - 0.1, zc));
   });
   // 主機（タービンと減速装置、1 軸分ずつ）と推進軸（船尾へ）
@@ -577,6 +586,11 @@ export function buildShipModel({ h, draft }) {
   }
   // 船体座標のカメラ位置（透かす面の判定に使う。毎フレーム）
   const setViewer = (camLocal) => xv.camLocal.value.copy(camLocal);
+  // raycast の当たり（船体座標の点 p）が透視で透けている面か。描画（ghostHere）と同じ向きで判定する:
+  // 決まった船外向きを持つ材質（船首楼の後端壁）は、板の裏の面も透けているので、面の法線で判定すると裏の面に当たってしまう
+  const outwardOf = new Map([...ghostOf].filter(([, o]) => o).map(([m, o]) => [m, V3(...o)]));
+  const toCam = new THREE.Vector3();
+  const isGhost = (hit, p) => xv.on.value > 0.5 && !!hit.face && (outwardOf.get(hit.object.material) ?? hit.face.normal).dot(toCam.copy(xv.camLocal.value).sub(p)) > 0;
   // 上部構造・兵装を隠す（甲板を外す表示）
   const setTopside = (on) => { top.visible = on; };
 
@@ -601,5 +615,5 @@ export function buildShipModel({ h, draft }) {
   }
 
   const materials = new Set([...built.map((m) => m.material), ...Object.values(M), breachMat]);
-  return { group, cut, top, hullMeshes, materials, doors, funnelTops, flag, addBreachDecal, update, setXray, setViewer, setTopside };
+  return { group, cut, top, hullMeshes, materials, doors, funnelTops, flag, addBreachDecal, update, setXray, setViewer, setTopside, isGhost };
 }
