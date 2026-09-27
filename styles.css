@@ -126,22 +126,22 @@ select { width: 100%; background: rgb(0 0 0 / 0.3); border: 1px solid var(--line
 .sw { display: inline-block; width: 12px; height: 10px; border-radius: 3px; margin-left: 8px; }
 .sw.water { background: var(--water); } .sw.door { background: var(--accent-2); } .sw.breach { background: var(--danger); }
 #profile { flex: 1; width: 100%; }
-#profile .room { fill: rgb(255 255 255 / 0.04); stroke: rgb(170 200 225 / 0.35); stroke-width: 0.06; }
+#profile .room { fill: rgb(255 255 255 / 0.04); stroke: rgb(170 200 225 / 0.35); stroke-width: 0.12; }
 #profile .room.hot { stroke: var(--warn); }
 #profile .fill { fill: var(--water); opacity: 0.85; transition: height 0.2s, y 0.2s; }
-#profile .hull { fill: none; stroke: rgb(200 225 245 / 0.7); stroke-width: 0.1; }
-#profile .bulk { stroke: rgb(220 235 250 / 0.9); stroke-width: 0.14; }
-#profile .wl { stroke: var(--accent); stroke-width: 0.06; stroke-dasharray: 0.4 0.3; opacity: 0.8; }
-#profile .label { fill: rgb(230 240 250 / 0.85); font-size: 0.42px; font-weight: 600; pointer-events: none; }
-#profile .pct { fill: #fff; font-size: 0.5px; font-weight: 800; pointer-events: none; }
-#profile .pres { fill: var(--warn); font-size: 0.42px; font-weight: 800; pointer-events: none; }
+#profile .hull { fill: none; stroke: rgb(200 225 245 / 0.7); stroke-width: 0.2; }
+#profile .bulk { stroke: rgb(220 235 250 / 0.9); stroke-width: 0.3; }
+#profile .wl { stroke: var(--accent); stroke-width: 0.15; stroke-dasharray: 1 0.7; opacity: 0.8; }
+#profile .label { fill: rgb(230 240 250 / 0.85); font-weight: 600; pointer-events: none; } /* 字の大きさは profile.js の FONT */
+#profile .pct { fill: #fff; font-weight: 800; pointer-events: none; }
+#profile .pres { fill: var(--warn); font-weight: 800; pointer-events: none; }
 #profile .room.pressed { fill: rgb(255 193 94 / 0.14); }
 #profile .door { cursor: pointer; }
-#profile .door rect { stroke-width: 0.06; }
+#profile .door rect { stroke-width: 0.12; }
 #profile .door.open rect { fill: rgb(255 193 94 / 0.3); stroke: var(--warn); }
 #profile .door.closed rect { fill: rgb(126 240 198 / 0.35); stroke: var(--accent-2); }
-#profile .door:hover rect, #profile .door:focus-visible rect { stroke-width: 0.14; }
-#profile .breach { fill: var(--danger); stroke: #fff; stroke-width: 0.05; }
+#profile .door:hover rect, #profile .door:focus-visible rect { stroke-width: 0.3; }
+#profile .breach { fill: var(--danger); stroke: #fff; stroke-width: 0.12; }
 
 /* ---------- 通知・モーダル ---------- */
 #toasts { position: fixed; right: 324px; bottom: 214px; display: flex; flex-direction: column; gap: 8px; z-index: 6; align-items: flex-end; pointer-events: none; }

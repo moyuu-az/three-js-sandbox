@@ -5,7 +5,7 @@ import * as F from '../src/flooding.js';
 import * as Lo from '../src/layout.js';
 import { buildShipGrid } from '../src/shipgrid.js';
 
-const h = 0.3;
+const h = 0.5;
 const R = (name) => Lo.ROOMS.findIndex((r) => r.name === name);
 const up = [0, 1, 0];
 const RHO_G = 1025 * 9.81;
@@ -17,25 +17,26 @@ const allClosed = {
 const hasLink = (links, a, b) => links.some((l) => (l.a === R(a) && l.b === R(b)) || (l.a === R(b) && l.b === R(a)));
 
 // ---------- 部屋のつながり ----------
-test('つながり: 水密扉 D1 が開いていれば機関室と通路はつながり、閉じればつながらない', () => {
-  const open = A.roomLinks(buildShipGrid(h).grid, Lo.ROOMS.length);
-  assert.ok(hasLink(open, '機関室', '通路'));
-  const closed = A.roomLinks(buildShipGrid(h, { doors: { D1: false } }).grid, Lo.ROOMS.length);
-  assert.ok(!hasLink(closed, '機関室', '通路'));
-  // 水密隔壁をまたぐつながりは無い（第1船倉と船首倉庫）
-  assert.ok(!hasLink(open, '第1船倉', '船首倉庫'));
+test('つながり: 水密扉 D3 が開いていれば前部・後部機械室はつながり、閉じれば（既定）つながらない', () => {
+  const open = A.roomLinks(buildShipGrid(h, { doors: { D3: true } }).grid, Lo.ROOMS.length);
+  assert.ok(hasLink(open, '前部機械室', '後部機械室'));
+  const closed = A.roomLinks(buildShipGrid(h).grid, Lo.ROOMS.length);
+  assert.ok(!hasLink(closed, '前部機械室', '後部機械室'));
+  // 水密隔壁をまたぐつながりは無い（第1缶室と第2缶室）。同じ区画の上下の部屋は昇降口でつながる
+  assert.ok(!hasLink(open, '第1缶室', '第2缶室'));
+  assert.ok(hasLink(closed, '後部弾薬庫', '士官室'));
 });
 
 test('つながり: つながりの点は扉の範囲にあり、部屋の組は a < b で重複しない', () => {
-  const links = A.roomLinks(buildShipGrid(h).grid, Lo.ROOMS.length);
+  const links = A.roomLinks(buildShipGrid(h, { doors: { D3: true } }).grid, Lo.ROOMS.length);
   const keys = links.map((l) => `${l.a}-${l.b}`);
   assert.equal(new Set(keys).size, keys.length);
   for (const l of links) assert.ok(l.a < l.b && l.pts.length > 0 && l.pts.length % 3 === 0);
-  const d1 = Lo.DOORS.find((d) => d.id === 'D1').box;
-  const l = links.find((x) => (x.a === R('機関室') && x.b === R('通路')) || (x.b === R('機関室') && x.a === R('通路')));
+  const d3 = Lo.DOORS.find((d) => d.id === 'D3').box;
+  const l = links.find((x) => (x.a === R('前部機械室') && x.b === R('後部機械室')) || (x.b === R('前部機械室') && x.a === R('後部機械室')));
   for (let i = 0; i < l.pts.length; i += 3) {
-    assert.ok(l.pts[i] >= d1.x[0] - h && l.pts[i] <= d1.x[1] + h, `x=${l.pts[i]}`);
-    assert.ok(l.pts[i + 2] >= d1.z[0] - h && l.pts[i + 2] <= d1.z[1] + h, `z=${l.pts[i + 2]}`);
+    assert.ok(l.pts[i] >= d3.x[0] - h && l.pts[i] <= d3.x[1] + h, `x=${l.pts[i]}`);
+    assert.ok(l.pts[i + 2] >= d3.z[0] - h && l.pts[i + 2] <= d3.z[1] + h, `z=${l.pts[i + 2]}`);
   }
 });
 
@@ -205,24 +206,27 @@ test('流量: 空気の水頭は流入を押し返し、外の水頭と等しけ
 });
 
 // ---------- 外板の点と強度 ----------
-test('外板: 実船の外板の点は船外に接し、上甲板は上向き、甲板室は壁の強度、閉じたハッチの周りは最も弱い', () => {
-  const closed = Lo.SEA_OPENINGS.filter((o) => o.id === 'o1');
-  const { grid } = buildShipGrid(h, { seaOpenings: { o1: false } });
+test('外板: 実艦の外板の点は船外に接し、甲板は上向き、閉じたハッチの周りは最も弱い', () => {
+  // 既定で閉じている後部機械室の天窓 o8
+  const closed = Lo.SEA_OPENINGS.filter((o) => !o.open);
+  assert.ok(closed.some((o) => o.id === 'o8'));
+  const { grid } = buildShipGrid(h);
   const env = A.envelopePoints(grid, Lo.ROOMS.length, A.strengthOf(closed));
   const n = env.room.length;
-  assert.ok(n > 1000, `${n}`);
+  assert.ok(n > 3000, `${n}`);
   const pts = Array.from({ length: n }, (_, i) => A.envelopePoint(env, i));
   for (const p of pts) near(Math.hypot(...p.n), 1, 1e-6);
   const S = Lo.STRENGTH;
   const inRange = (p, base) => p.strength >= base * 0.85 - 1 && p.strength <= base * 1.15 + 1;
-  const hold1 = pts.filter((p) => p.room === R('第1船倉'));
-  assert.ok(hold1.some((p) => p.n[1] === 1 && inRange(p, S.deck)), '第1船倉の天井は上甲板');
-  assert.ok(hold1.some((p) => Math.abs(p.n[0]) === 1 && inRange(p, S.hull)), '第1船倉の側面は外板');
-  assert.ok(pts.filter((p) => Lo.ROOMS[p.room].comp === 'DH').every((p) => inRange(p, S.house)), '甲板室');
-  const hatch = pts.filter((p) => p.closure === 'o1');
-  assert.ok(hatch.length > 0 && hatch.every((p) => inRange(p, S.closure) && p.room === R('船首倉庫')), '船首倉庫ハッチ');
+  const boiler = pts.filter((p) => p.room === R('第2缶室'));
+  assert.ok(boiler.some((p) => p.n[1] === 1 && inRange(p, S.deck)), '缶室の天井は上甲板');
+  assert.ok(boiler.some((p) => Math.abs(p.n[0]) === 1 && inRange(p, S.hull)), '缶室の側面は外板');
+  const hatch = pts.filter((p) => p.closure === 'o8');
+  assert.ok(hatch.length > 0 && hatch.every((p) => inRange(p, S.closure) && p.room === R('後部機械室')), '後部機械室の天窓');
+  // 船首楼の後端壁（後ろ向き）は外板の強度
+  assert.ok(pts.some((p) => p.n[2] === -1 && Lo.ROOMS[p.room].comp === 'FC' && inRange(p, S.hull)), '船首楼の後端壁');
   // 開いているハッチは船外とつながる開口なので弱点にならない
-  const envOpen = A.envelopePoints(buildShipGrid(h).grid, Lo.ROOMS.length, A.strengthOf([]));
+  const envOpen = A.envelopePoints(buildShipGrid(h, { seaOpenings: { o8: true, o11: true } }).grid, Lo.ROOMS.length, A.strengthOf([]));
   assert.ok(envOpen.closure.every((c) => c === null));
 });
 
@@ -267,10 +271,12 @@ test('出入り: 満水の部屋の開口は空気を通さず、NaN になら�
   assert.ok([...air.amount, ...air.pressure].every(Number.isFinite));
 });
 
-test('外板の種類: 甲板室の部屋は甲板室の壁、上向きの面は上甲板、それ以外は外板（破断の通知と強度で同じ判定）', () => {
-  const house = Lo.ROOMS.findIndex((r) => r.comp === 'DH');
-  assert.equal(A.surfaceKind(house, [0, 1, 0]), 'house');
-  assert.equal(A.surfaceKind(R('第1船倉'), [0, 1, 0]), 'deck');
-  assert.equal(A.surfaceKind(R('第1船倉'), [1, 0, 0]), 'hull');
-  assert.equal(A.surfaceKind(R('第1船倉'), [0, -1, 0]), 'hull');
+test('外板の種類: 上向きの面は甲板、それ以外（舷側・船底・船首楼の後端壁）は外板（破断の通知と強度で同じ判定）', () => {
+  assert.equal(A.surfaceKind(R('第1缶室'), [0, 1, 0]), 'deck');
+  assert.equal(A.surfaceKind(R('船首楼 前部'), [0, 1, 0]), 'deck');
+  assert.equal(A.surfaceKind(R('第1缶室'), [1, 0, 0]), 'hull');
+  assert.equal(A.surfaceKind(R('第1缶室'), [0, -1, 0]), 'hull');
+  assert.equal(A.surfaceKind(R('船首楼 後部'), [0, 0, -1]), 'hull');
+  assert.ok(Object.values(Lo.STRENGTH).every((v) => v >= 100e3), '軍艦の構造: どの強度も 0.1 MPa（水頭 10 m）以上');
+  assert.ok(Lo.STRENGTH.hull > Lo.STRENGTH.deck && Lo.STRENGTH.deck > Lo.STRENGTH.closure, '閉じた開口 → 甲板 → 外板の順に弱い');
 });

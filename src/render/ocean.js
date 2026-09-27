@@ -6,18 +6,15 @@ import {
   max, min, abs, clamp, dot, exp, transformNormalToView, varying, Discard, cameraPosition, length, pow, If, select, mat4, uniformArray as ua,
 } from 'three/tsl';
 import * as H from '../hull.js';
-import * as Lo from '../layout.js';
 import * as W from '../waves.js';
 import { rippleNormalMap } from './textures.js';
 
 // 船体の半幅を (z, y) の表にしたテクスチャ（シェーダで「船体の中か」を判定する）
-function halfBreadthTexture(nz = 256, ny = 64) {
+function halfBreadthTexture(nz = 1024, ny = 64) {
   const data = new Float32Array(nz * ny * 4);
   for (let j = 0; j < ny; j++) for (let i = 0; i < nz; i++) {
-    const z = H.Z_MIN + (H.L * (i + 0.5)) / nz, y = (Lo.HOUSE.top * (j + 0.5)) / ny;
-    let hb = H.halfBreadth(z, y);
-    if (Lo.inHouse(0, y, z)) hb = Math.max(hb, Lo.HOUSE.hw);
-    data[4 * (i + nz * j)] = hb;
+    const z = H.Z_MIN + (H.L * (i + 0.5)) / nz, y = (H.Y_MAX * (j + 0.5)) / ny;
+    data[4 * (i + nz * j)] = H.halfBreadth(z, y);
   }
   const t = new THREE.DataTexture(data, nz, ny, THREE.RGBAFormat, THREE.FloatType);
   t.minFilter = t.magFilter = THREE.NearestFilter;
@@ -67,7 +64,7 @@ export function createOcean(scene, { sunDir }) {
   const hbTex = halfBreadthTexture();
   // 船体座標の点 p が船体（外殻）の中か。少し内側に余裕を取る（喫水線で海面が船体に届くように）
   const insideHull = (p) => {
-    const tu = p.z.sub(H.Z_MIN).div(H.L), tv = p.y.div(Lo.HOUSE.top);
+    const tu = p.z.sub(H.Z_MIN).div(H.L), tv = p.y.div(H.Y_MAX);
     const inRange = tu.greaterThan(0).and(tu.lessThan(1)).and(tv.greaterThan(0)).and(tv.lessThan(1));
     const hb = texture(hbTex, vec2(tu, tv)).r;
     return inRange.and(abs(p.x).lessThan(hb.sub(0.03)));

@@ -5,7 +5,7 @@
 //   → 部屋の水位と開口部の内外水頭差から流量を求め、開口部に粒子を生成 → 船の加速度・回転を見かけの力として流体を進める → 描画
 import * as THREE from 'three/webgpu';
 import { createStage, WebGPUUnavailable } from './render/stage.js';
-import { createSim, SEABED_Y, RHO, ENVELOPE_VOLUME, SHIP_MASS, DT } from './sim.js';
+import { createSim, SEABED_Y, RHO, ENVELOPE_VOLUME, SHIP_MASS, DT, DESIGN_DRAFT } from './sim.js';
 import { buildShipGrid, breachAt, ruptureAt, gridSpec } from './shipgrid.js';
 import * as A from './air.js';
 import { packForGpu, MAX_OPENINGS } from './voxel.js';
@@ -26,15 +26,16 @@ import { flyDelta, MOVE_KEYS } from './cameraKeys.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
 // 画質: 格子間隔 h と粒子の上限。剛性と安定な時間刻みは h から fluidParams（gpu/fluid.js、圧縮率の SSOT）で決まる
+// 全長 130 m の艦を実寸で解くので、前の 30 m の船（h = 0.3 m）より粗い。艦内の容積 ~5,200 m³ の 9 割が入る粒子数を上限にする
 const QUALITY = {
-  light: { h: 0.36, max: 131072, subCap: 4 },
-  standard: { h: 0.3, max: 262144, subCap: 5 },
-  high: { h: 0.25, max: 393216, subCap: 6 },
+  light: { h: 0.6, max: 229376, subCap: 4 },
+  standard: { h: 0.5, max: 393216, subCap: 5 },
+  high: { h: 0.42, max: 524288, subCap: 6 },
 };
 const PPC = 8; // 1 セルあたりの粒子数（静止時）
-const BOTTOM_PROBES = [[0, 0, 0], [0, H.keelY(H.Z_MAX), H.Z_MAX], [0, H.keelY(H.Z_MIN), H.Z_MIN], [0, H.deckY(H.Z_MAX), H.Z_MAX], [0, H.deckY(H.Z_MIN), H.Z_MIN], [H.B / 2, H.D, 0], [-H.B / 2, H.D, 0], [0, Lo.HOUSE.top, -8]];
+const BOTTOM_PROBES = [[0, 0, 0], [0, H.keelY(H.Z_MAX), H.Z_MAX], [0, H.keelY(H.Z_MIN), H.Z_MIN], [0, H.deckY(H.Z_MAX), H.Z_MAX], [0, H.deckY(H.Z_MIN), H.Z_MIN], [H.B / 2, H.D, 0], [-H.B / 2, H.D, 0], [0, H.deckY(H.FC_Z) + 12, 28]];
 const MAX_SUBSTEPS = 10; // 1 フレームの流体サブステップの上限（GPU の負荷の上限。超えるとスロー再生になる）
-const MAX_RUPTURES = 8; // 破断の数の上限（開口は格子に MAX_OPENINGS = 32 個まで。常設の開口 8 と魚雷の破口の分を残す）
+const MAX_RUPTURES = 8; // 破断の数の上限（開口は格子に MAX_OPENINGS = 32 個まで。常設の開口 11 と魚雷の破口の分を残す）
 
 const $ = (id) => document.getElementById(id);
 const store = { get: (k, d) => { try { return JSON.parse(sessionStorage.getItem(k)) ?? d; } catch { return d; } }, set: (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch { /* 保存できなくても動く */ } } };
@@ -60,7 +61,7 @@ async function main() {
   const Q = QUALITY[settings.quality];
   const h = Q.h, spec = gridSpec(h);
   const particleVolume = h ** 3 / PPC; // 粒子 1 個の水の体積 [m³]
-  const { stiffness, dtMax } = fluidParams(h, PPC); // 剛性と、その音速で安定な時間刻み（圧縮率は fluidParams の既定値）
+  const { stiffness, dtMax } = fluidParams(h, PPC, { depth: H.D }); // 剛性と、その音速で安定な時間刻み。艦内の水の深さ（上甲板まで）で縮みを 12% に抑える
 
   $('loadingMsg').textContent = 'GPU を初期化中…';
   let stage;
@@ -111,7 +112,7 @@ async function main() {
 
   // ---------- 描画物 ----------
   $('loadingMsg').textContent = '船を建造中…';
-  const model = buildShipModel({ h, draft: 2.6 });
+  const model = buildShipModel({ h, draft: DESIGN_DRAFT });
   scene.add(model.group);
   const ocean = createOcean(scene, { sunDir });
   ocean.setWaves(waves);
@@ -130,14 +131,15 @@ async function main() {
   // ---------- 表示モード ----------
   // exterior: 外観 / xray: 透視（カメラの側の外殻だけ透かす）/ cutaway: 断面（中心線で縦に切る）
   let view = 'exterior', cutSide = 0, follow = true, peel = 'none';
-  // 甲板を外す高さ（船体座標の y）。上甲板 = 居住区の天井の下、第 2 甲板 = 船倉の天井の下。
-  // 上部構造 = 甲板で最も高い所（船首のそり、H.Y_MAX）の少し上。甲板室の床の高さにすると、そりで高い船首・船尾の甲板まで切れる
-  const PEEL = { none: 1e3, house: H.Y_MAX + 0.1, deck: H.D - 0.35, deck2: Lo.DECK2 - 0.12 };
+  // 甲板を外す高さ（船体座標の y）。上甲板 = 居住区・缶室の天井の下（船首楼も一緒に外れる）、下甲板 = 弾薬庫・倉庫の天井の下。
+  // 上部構造（艦橋・煙突・砲・発射管）は面で切らずに隠す（露天甲板の高さが船首楼の段で 2.4 m 違い、1 枚の面では切りそろえられない）
+  const PEEL = { none: 1e3, house: 1e3, deck: H.D - 0.35, deck2: Lo.LOWER - 0.12 };
   model.cut.clippingPlanes = [new THREE.Plane(), new THREE.Plane()]; // [断面, 甲板を外す]。使わない面は遠くに置く（数を変えると材質を作り直す）
   const setView = (v) => {
     view = v;
     model.cut.enabled = v !== 'exterior';
     model.setXray(v === 'xray');
+    model.setTopside(v === 'exterior' || peel === 'none');
     syncSeg('viewMode', v);
   };
 
@@ -193,18 +195,20 @@ async function main() {
 
   // ---------- 魚雷 ----------
   let run = null;
+  // 続けて撃つ魚雷（シナリオの 2 本目以降）。前の 1 本が命中してから SALVO_GAP 秒おきに撃つ
+  const salvo = [], SALVO_GAP = 2.5;
+  let salvoAt = 0;
   const breachSize = () => [+$('breachW').value, +$('breachH').value];
-  function launch(local, side) {
+  function launch(local, side, [w, hh] = breachSize()) {
     if (run) return;
     const y = Math.min(Math.max(local[1], H.TANK_TOP + 0.4), H.deckY(local[2]) - 0.4);
     const z = Math.max(H.Z_MIN + 1.5, Math.min(H.Z_MAX - 2.5, local[2]));
     if (H.halfBreadth(z, y) <= 0.3) { toast('そこは狙えません（船体の端）', 'warn'); return; }
-    const [w, hh] = breachSize();
     const b = breachAt(side * H.halfBreadth(z, y), y, z, w, hh);
     run = { b, w, hh };
     const target = new THREE.Vector3(...b.center).applyMatrix4(model.group.matrixWorld);
     const out = new THREE.Vector3(...b.normal).applyQuaternion(model.group.quaternion).setY(0).normalize();
-    torpedo.position.copy(target).addScaledVector(out, 70);
+    torpedo.position.copy(target).addScaledVector(out, 140);
     torpedo.position.y = Math.min(target.y, sim.sea(target.x, target.z) - 1.2);
     torpedo.visible = true;
     toast('魚雷発射', 'warn');
@@ -223,6 +227,7 @@ async function main() {
     torpedo.visible = false;
     const { b, w, hh } = run;
     run = null;
+    salvoAt = simTime + SALVO_GAP;
     gridState.breaches.push(b);
     rebuild();
     model.addBreachDecal(b.center, b.normal, w, hh);
@@ -236,7 +241,7 @@ async function main() {
   }
 
   // ---------- 空気圧・水圧による破断 ----------
-  const KIND_NAME = { hull: '外板', deck: '上甲板', house: '甲板室の壁' };
+  const KIND_NAME = { hull: '外板', deck: '甲板' };
   // 開口は格子に MAX_OPENINGS 個まで。入りきらない穴は開けない（戻り値 false）: 格子に入らない穴を「破れた」ことにすると
   // 圧力が抜けずに同じ場所で破断を繰り返し、閉じた開口を開けると（破口より先に格子に入るので）魚雷の破口が黙って格子から消える
   function rupture(w) {
@@ -331,22 +336,29 @@ async function main() {
   const profile = createProfile($('profile'), { onDoor: (id) => setDoor(id, !isOpen(id)) });
   const chart = createChart($('chart'), [{ color: '#ffb44c', min: -30, max: 30 }, { color: '#7ef0c6', min: -15, max: 15 }, { color: '#4cc3ff', min: 0 }]);
 
+  // 破口の大きさは九三式・Mk 14 級の魚雷の弾頭（300〜500 kg）が駆逐艦の外板に開ける穴の目安（幅 5〜8 m）
+  const K = Lo.BULKHEADS;
+  // hits: 撃ち込む魚雷（at = [舷 ±1, 高さ, z]、size = 破口の幅・高さ）。2 本目以降は前の命中から SALVO_GAP 秒おき
   const SCENARIOS = [
-    { name: '第1船倉 右舷に被雷', note: '1 区画浸水。船首が沈むが浮き続けるはず', at: [-1, 1.8, 7.8], size: [1.6, 1.2] },
-    { name: '隔壁をまたぐ被雷', note: '第2船倉と第1船倉の 2 区画に同時浸水', at: [1, 1.8, Lo.BULKHEADS[2]], size: [2.4, 1.4] },
-    { name: '居住区に被雷（右舷）', note: '第2甲板をまたぐ大破口。船倉と船室の両方に入り、傾き次第で通路 → 他の船室 → 水密扉 D1 → 機関室へ回る', at: [-1, 2.7, -0.3], size: [3.2, 2.6] },
-    { name: '機関室に被雷', note: '最大の区画だが 1 区画なら浮く（水位が D1 の敷居に届かない）', at: [1, 1.6, -8.5], size: [1.8, 1.3] },
-    { name: '船首 大破口', note: '船首区画と第1船倉。前のめりに沈む', at: [-1, 2.4, 11.2], size: [3.4, 1.8] },
-    // 後部を閉じ切ると、沈む船の後部に空気が閉じ込められる。深くなると閉じたハッチが水圧で押し破られ、流れ込む水に押された空気が
+    { name: '第1缶室に被雷（右舷）', note: '1 区画浸水。缶室は最大級の区画だが、前後の水密隔壁で止まり浮き続ける', hits: [{ at: [-1, 2.0, 16.5], size: [5.0, 3.0] }] },
+    { name: '缶室の隔壁をまたぐ被雷', note: '第1・第2缶室の 2 区画に同時浸水。駆逐艦の設計の目安（隣り合う 2 区画）でも沈まない', hits: [{ at: [1, 2.0, K[5]], size: [7.0, 3.5] }] },
+    { name: '機械室に被雷', note: '前部・後部機械室の間の隔壁（強化で追加）に当たる。実艦の共通の機械室なら 1 区画の大浸水', hits: [{ at: [-1, 1.8, K[8]], size: [6.0, 3.2] }] },
+    { name: '艦首に被雷', note: '弾薬庫と兵員室に浸水。区画に閉じ込められた空気が縮んで流入を押し返す（エアクッション）', hits: [{ at: [1, 2.6, 46], size: [6.0, 3.5] }] },
+    { name: '後部弾薬庫に被雷', note: '弾薬庫と士官室（下甲板の揚弾口でつながる）に浸水。艦尾が沈む', hits: [{ at: [-1, 2.8, -43], size: [5.5, 3.0] }] },
+    // 後部を閉じ切ると、沈む艦の後部に空気が閉じ込められる。深くなると閉じたハッチが水圧で押し破られ、流れ込む水に押された空気が
     // 縮んで圧力が上がる（空気圧・破断の観察用）
-    { name: '後部を密閉して船首大破口', note: '水密扉と後部の開口（昇降口・甲板室の扉・機関室の通風筒）を閉じてから被雷。沈むにつれ閉じた区画に空気が閉じ込められ、ハッチが水圧で破れる', at: [-1, 2.4, 11.2], size: [3.4, 1.8], close: ['D1', 'D2', 'D3', 'o2', 'o3', 'o4', 'o5', 'o6', 'o7'] },
+    {
+      name: '4 本被雷で撃沈（後部を密閉）', note: '機関区画と艦尾に 4 本。1〜2 本では沈まない艦も、6 区画以上に浸水すると艦尾から沈む。閉じた後部の区画の空気が縮み、ハッチが水圧で破れる',
+      hits: [{ at: [1, 2.0, K[5]], size: [7.0, 3.5] }, { at: [-1, 2.0, K[7]], size: [7.0, 3.5] }, { at: [1, 2.0, K[9]], size: [7.0, 3.5] }, { at: [-1, 2.8, K[11]], size: [7.0, 3.5] }],
+      close: ['o9', 'o10'],
+    },
   ];
   $('scenarios').replaceChildren(...SCENARIOS.map((s) => {
     const b = document.createElement('button');
     b.className = 'scenario';
     b.append(Object.assign(document.createElement('b'), { textContent: s.name }), Object.assign(document.createElement('span'), { textContent: s.note }));
     b.onclick = () => {
-      if (run) return; // 魚雷が走っている間は扉も変えない（launch と同じ条件）
+      if (run || salvo.length) return; // 魚雷が走っている間は扉も変えない（launch と同じ条件）
       const toClose = (s.close ?? []).filter((id) => isOpen(id));
       if (toClose.length) {
         // まとめて閉じる（1 枚ずつ setDoor すると格子の作り直しと通知が枚数分起きる）
@@ -357,11 +369,15 @@ async function main() {
         rebuild(); renderToggles();
         toast(`閉鎖: ${toClose.map((id) => (Lo.DOORS.find((d) => d.id === id) ?? Lo.SEA_OPENINGS.find((o) => o.id === id)).name).join('・')}`);
       }
-      $('breachW').value = s.size[0]; $('breachH').value = s.size[1]; syncRanges();
-      launch([s.at[0] * 3, s.at[1], s.at[2]], s.at[0]);
+      const [first, ...rest] = s.hits;
+      $('breachW').value = first.size[0]; $('breachH').value = first.size[1]; syncRanges();
+      fire(first);
+      salvo.push(...rest);
     };
     return b;
   }));
+  // 舷の外（半幅 × 3 の点）から狙う。launch が舷側の点に直す
+  const fire = (hit) => launch([hit.at[0] * 3, hit.at[1], hit.at[2]], hit.at[0], hit.size);
   const syncRanges = () => { $('breachWOut').textContent = `${(+$('breachW').value).toFixed(1)} m`; $('breachHOut').textContent = `${(+$('breachH').value).toFixed(1)} m`; };
   $('breachW').oninput = $('breachH').oninput = syncRanges;
   syncRanges();
@@ -371,7 +387,7 @@ async function main() {
   let speed = 1;
   onSeg('speed', (v) => { speed = +v; });
   onSeg('viewMode', setView);
-  onSeg('peel', (v) => { peel = v; });
+  onSeg('peel', (v) => { peel = v; model.setTopside(view === 'exterior' || v === 'none'); });
   $('labelsOn').onchange = () => { labelsOn = $('labelsOn').checked; };
   onSeg('waterMode', (v) => { fluidView.setMode(v); $('speedLegend').style.display = v === 'particles' ? '' : 'none'; });
   $('speedLegend').style.display = 'none';
@@ -402,7 +418,7 @@ async function main() {
   $('helpBtn').onclick = () => $('help').classList.remove('hidden');
   $('helpClose').onclick = () => $('help').classList.add('hidden');
   const CAMS = {
-    quarter: [30, 14, 26], side: [44, 3, 0], top: [0.5, 60, 0.5], under: [22, -9, 14], bow: [10, 7, 38],
+    quarter: [95, 38, 85], side: [150, 8, 0], top: [0.5, 190, 0.5], under: [70, -24, 40], bow: [28, 16, 118],
   };
   let camTween = null;
   $('cams').addEventListener('click', (e) => {
@@ -528,16 +544,17 @@ async function main() {
     }
 
     // 5) 描画の更新
-    model.update(real);
-    model.radar.rotation.y += dt * 2.5;
-    model.prop.rotation.z += dt * (wm && wm.mass > 0 ? 0 : 3);
+    model.update(real, speed && !(wm && wm.mass > 0) ? 3 : 0); // 浸水したら機関を止める
     updateTorpedo(dt);
+    if (!run && salvo.length && simTime >= salvoAt && dt > 0) fire(salvo.shift());
     flash.intensity *= Math.exp(-10 * Math.max(dt, 1 / 240));
     fx.emitOpenings(dt, ops, flows, (p) => sim.toWorld(p));
     fx.emitAir(dt, ops, airFlows, (p) => sim.toWorld(p));
     fx.emitWaterline(dt, sim.body.linvel().y);
-    const ft = model.funnelTop.getWorldPosition(tmp);
-    if (ft.y > sim.sea(ft.x, ft.z) + 0.5) for (smokeDebt += 14 * dt; smokeDebt >= 1; smokeDebt--) fx.emit(P.SMOKE, ft.x, ft.y, ft.z, 0, 1.2, 0, 0.8);
+    for (smokeDebt += 14 * dt; smokeDebt >= 1; smokeDebt--) for (const f of model.funnelTops) {
+      const ft = f.getWorldPosition(tmp);
+      if (ft.y > sim.sea(ft.x, ft.z) + 0.5) fx.emit(P.SMOKE, ft.x, ft.y, ft.z, 0, 1.2, 0, 1.6);
+    }
 
     // カメラ（切り取り・透視の判定より先に動かす。後にすると判定が 1 フレーム遅れて、回り込むと手前の壁がちらつく）
     if (camTween) {
@@ -586,7 +603,7 @@ async function main() {
 
     // 太陽の影は船の周りだけ高解像度に
     sun.target.position.copy(model.group.position);
-    sun.position.copy(model.group.position).addScaledVector(sunDir, 70);
+    sun.position.copy(model.group.position).addScaledVector(sunDir, 160);
 
     updateLabels(peelY);
     fluidView.render(camera, model.group.matrixWorld, { cutSide, peelY, sunDir, under });

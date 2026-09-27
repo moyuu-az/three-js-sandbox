@@ -74,14 +74,14 @@ test('粒子数: 流量 × 時間 ÷ 粒子の体積。端数は持ち越して�
   assert.equal(F.particlesFor(-1, 1, 0.001).count, 0);
 });
 
-test('実船: 喫水線下の破口の流量は、深さに見合った値になる', () => {
-  const h = 0.3;
+test('実艦: 喫水線下の破口の流量は、深さに見合った値になる', () => {
+  const h = 0.5;
   const b = breachAt(3.5, 1.6, 7.5, 1.6, 1.2);
   const { openings } = buildShipGrid(h, { breaches: [b] });
   const o = openings.find((x) => x.kind === 'breach');
-  // 船を喫水 2.6 m で浮かべた状態（ワールド y = 船体 y − 2.6）
-  const q = F.openingFlow(o, { toWorld: (p) => [p[0], p[1] - 2.6, p[2]], sea: () => 0, up, level: -Infinity }).q;
-  const expect = F.CD * 1.92 * Math.sqrt(2 * 9.81 * 1.0); // 中心の深さ 1.0 m
+  // 艦を設計喫水 4.14 m で浮かべた状態（ワールド y = 船体 y − 4.14）
+  const q = F.openingFlow(o, { toWorld: (p) => [p[0], p[1] - 4.14, p[2]], sea: () => 0, up, level: -Infinity }).q;
+  const expect = F.CD * 1.92 * Math.sqrt(2 * 9.81 * 2.54); // 中心の深さ 2.54 m
   assert.ok(Math.abs(q / expect - 1) < 0.15, `q=${q} 目安=${expect}`);
   const nodes = F.roomNodes(buildShipGrid(h).grid, Lo.ROOMS.length);
   assert.equal(nodes.length, Lo.ROOMS.length);

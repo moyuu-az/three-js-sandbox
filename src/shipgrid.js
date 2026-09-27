@@ -6,7 +6,7 @@ import * as V from './voxel.js';
 const MARGIN = 0.6; // 船体の外側に最低 1 層は船外の格子点を置く
 export const BOUNDS = {
   x: [-H.B / 2 - MARGIN, H.B / 2 + MARGIN],
-  y: [-MARGIN, Lo.HOUSE.top + MARGIN],
+  y: [-MARGIN, H.Y_MAX + MARGIN],
   z: [H.Z_MIN - MARGIN, H.Z_MAX + MARGIN],
 };
 
@@ -39,31 +39,31 @@ export function buildShipGrid(h, state = {}) {
   for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
     const n = grid.index(i, j, k);
     const [x, y, z] = grid.pos(i, j, k);
-    const inHull = H.inside(x, y, z);
-    if (!inHull && !Lo.inHouse(x, y, z)) continue; // 船外（既定値）
-    if (inHull && y < H.TANK_TOP) { type[n] = V.NODE_SOLID; continue; } // 二重底
+    if (!H.inside(x, y, z)) continue; // 船外（既定値）
+    if (y < H.TANK_TOP) { type[n] = V.NODE_SOLID; continue; } // 二重底
     type[n] = V.NODE_FLUID;
     room[n] = Math.max(0, Lo.roomAt(x, y, z));
     if (Lo.roomAt(x, y, z) < 0) room[n] = V.NO_ROOM;
   }
 
-  // 板: 面に最も近い 1 層の格子点を固体にする。「面から半格子以内」で選ぶと、面が格子点のちょうど中間に来たとき
+  // 板: 面に最も近い 1 層の格子点を固体にする。y の板の at が 'upper' などの文字列なら z ごとに高さを解決する（舷弧に沿う甲板）。「面から半格子以内」で選ぶと、面が格子点のちょうど中間に来たとき
   // 丸め誤差で 0 層（＝水密隔壁に穴）か 2 層になるので、層の番号を丸めで 1 つに決める
   const layer = (v, axis) => Math.round((v - grid.origin[axis]) / h - 0.5);
   const inSpan = (span, x, y, z) =>
     (!span.x || (x >= span.x[0] && x <= span.x[1])) &&
     (!span.z || (z >= span.z[0] && z <= span.z[1])) &&
     (!span.y || (y >= Lo.resolveY(span.y[0], z) && y <= Lo.resolveY(span.y[1], z)));
-  const plates = Lo.PLATES.map((p) => ({ ...p, idx: p.axis === 'deck' ? -1 : layer(p.at, 'xyz'.indexOf(p.axis)) }));
+  const plates = Lo.PLATES.map((p) => ({ ...p, idx: typeof p.at === 'number' ? layer(p.at, 'xyz'.indexOf(p.axis)) : -1 }));
   for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) {
     const [x, , z] = grid.pos(i, 0, k);
-    const deckJ = layer(H.deckY(z), 1);
+    const colJ = plates.map((p) => (p.idx >= 0 ? p.idx : layer(Lo.resolveY(p.at, z), 1)));
     for (let j = 0; j < ny; j++) {
       const n = grid.index(i, j, k);
       if (type[n] !== V.NODE_FLUID) continue;
       const y = grid.pos(i, j, k)[1];
-      for (const p of plates) {
-        const on = p.axis === 'x' ? i === p.idx : p.axis === 'y' ? j === p.idx : p.axis === 'z' ? k === p.idx : j === deckJ;
+      for (let q = 0; q < plates.length; q++) {
+        const p = plates[q];
+        const on = p.axis === 'x' ? i === p.idx : p.axis === 'y' ? j === colJ[q] : k === p.idx;
         if (on && inSpan(p.span, x, y, z)) { type[n] = V.NODE_SOLID; plate[n] = 1; break; }
       }
     }
@@ -174,10 +174,12 @@ export function breachAt(x, y, z, w = 1.6, hgt = 1.2) {
 
 /**
  * 空気圧・水圧で外板が破れた穴。p: 外板の点（air.envelopePoints）、axis: 格子の面の向き（船外向き）。
- * 舷側なら船体の曲面の法線を使う。甲板・甲板室の壁は格子の向きのまま
+ * 舷側なら船体の曲面の法線を使う。甲板・船首楼の後端壁は格子の向きのまま
  */
 export function ruptureAt(p, axis, size = 0.8, meta = {}) {
-  const onHull = Math.abs(axis[1]) < 0.5 && H.inside(p[0] - axis[0] * 0.2, p[1], p[2] - axis[2] * 0.2) && !Lo.inHouse(p[0], p[1], p[2]);
+  // 船首楼の後端壁（上甲板より上、船首楼の後ろ端の平らな壁）は舷側ではない。曲面の法線を数値微分すると段の角で向きが狂う
+  const fcWall = p[1] > H.upperY(p[2]) + 0.05 && Math.abs(p[2] - H.FC_Z) < 1;
+  const onHull = Math.abs(axis[1]) < 0.5 && !fcWall && H.inside(p[0] - axis[0] * 0.2, p[1], p[2] - axis[2] * 0.2);
   let n = onHull ? H.surfaceNormal(p[0], p[1], p[2]) : axis;
   if (!(Math.abs(Math.hypot(...n) - 1) < 1e-3)) n = axis;
   return { center: [...p], normal: n, ...faceAxes(n), half: [size / 2, size / 2], ...meta };

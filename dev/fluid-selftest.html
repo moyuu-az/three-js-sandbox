@@ -21,6 +21,7 @@
 import * as THREE from 'three/webgpu';
 import * as V from '../src/voxel.js';
 import * as Lo from '../src/layout.js';
+import * as H from '../src/hull.js';
 import * as F from '../src/flooding.js';
 import { buildShipGrid, gridSpec, breachAt } from '../src/shipgrid.js';
 import { createFluid, fluidParams, OPEN_INFLOW, OPEN_CLOSED } from '../src/gpu/fluid.js';
@@ -31,9 +32,9 @@ out.textContent = '';
 const results = [];
 const check = (name, ok, detail) => { results.push({ name, ok, detail }); log(`${ok ? 'PASS' : 'FAIL'} ${name} — ${detail}`, ok ? 'ok' : 'ng'); };
 
-const h = 0.3, PPC = 8, spec = gridSpec(h), Vp = h ** 3 / PPC;
+const h = +(new URLSearchParams(location.search).get('h') ?? 0.5), PPC = 8, spec = gridSpec(h), Vp = h ** 3 / PPC; // 既定はアプリの標準画質
 const Q0 = new URLSearchParams(location.search);
-const { stiffness: k0, dtMax: dt0 } = fluidParams(h, PPC);
+const { stiffness: k0, dtMax: dt0 } = fluidParams(h, PPC, { depth: H.D }); // アプリ（main.js）と同じ深さの剛性
 const stiffness = k0 * +(Q0.get('kmul') ?? 1);
 const dtMax = dt0 * +(Q0.get('cflmul') ?? 1) / Math.sqrt(+(Q0.get('kmul') ?? 1));
 const R = (name) => Lo.ROOMS.findIndex((r) => r.name === name);
@@ -45,7 +46,7 @@ if (Q0.has('only1')) window.ONLY1 = true;
 if (!renderer.backend.isWebGPUBackend) { log('WebGPU が使えません', 'ng'); throw new Error('no webgpu'); }
 const device = renderer.backend.device;
 const qs = new URLSearchParams(location.search);
-const fluid = createFluid(renderer, { dims: spec.dims, ppc: PPC, maxParticles: 262144, stiffness, ...(qs.has('mu') ? { viscosity: +qs.get('mu') } : {}), ...(qs.has('bulk') ? { bulkViscosity: +qs.get('bulk') } : {}) });
+const fluid = createFluid(renderer, { dims: spec.dims, ppc: PPC, maxParticles: 393216, stiffness, ...(qs.has('mu') ? { viscosity: +qs.get('mu') } : {}), ...(qs.has('bulk') ? { bulkViscosity: +qs.get('bulk') } : {}) });
 
 // 部屋 room の下から fraction の高さまで、格子点ごとに PPC 個の粒子を置く（格子座標）
 function fillRoom(grid, room, fraction) {
@@ -82,25 +83,25 @@ const countBy = (grid, ps) => { const c = new Map(); for (const p of ps) { const
 const nan = (ps) => ps.some((p) => !Number.isFinite(p.x + p.y + p.z + p.s));
 const t0 = performance.now();
 
-// ---------- 1) 静水: 機関室に 50% 入れて静置 → 漏れない・量が保存される・水面が平ら・静かになる ----------
+// ---------- 1) 静水: 前部機械室に 50% 入れて静置 → 漏れない・量が保存される・水面が平ら・静かになる ----------
 {
   const b = buildShipGrid(h, allClosed);
   if (Q0.has('box')) {
-    // 比較用: 平らな壁だけの箱（船の格子の中の直方体 20×16×24）を第 1 船倉として使う
+    // 比較用: 平らな壁だけの箱（艦の格子の中の直方体 20×16×24）を第1缶室として使う
     b.grid.type.fill(V.NODE_EXTERIOR); b.grid.room.fill(V.NO_ROOM);
-    for (let k = 40; k < 64; k++) for (let j = 4; j < 20; j++) for (let i = 4; i < 24; i++) {
+    for (let k = 140; k < 164; k++) for (let j = 2; j < 18; j++) for (let i = 2; i < 22; i++) {
       const n = b.grid.index(i, j, k);
-      const wall = i === 4 || i === 23 || j === 4 || k === 40 || k === 63;
+      const wall = i === 2 || i === 21 || j === 2 || k === 140 || k === 163;
       b.grid.type[n] = wall ? V.NODE_SOLID : V.NODE_FLUID;
-      b.grid.room[n] = wall ? V.NO_ROOM : R('第1船倉');
+      b.grid.room[n] = wall ? V.NO_ROOM : R('第1缶室');
     }
   }
   fluid.setGrid(V.packForGpu(b.grid));
-  const room = R(Q0.get('room') ?? '機関室');
+  const room = R(Q0.get('room') ?? '前部機械室');
   let pts = fillRoom(b.grid, room, +(Q0.get('fill') ?? 0.5));
   if (Q0.has('blob')) { // 壁に触れない水の塊（箱の中央）
     pts = [];
-    for (let k = 46; k < 58; k++) for (let j = 8; j < 15; j++) for (let i = 9; i < 19; i++)
+    for (let k = 146; k < 158; k++) for (let j = 6; j < 13; j++) for (let i = 7; i < 17; i++)
       for (let a = 0; a < 2; a++) for (let c = 0; c < 2; c++) for (let d = 0; d < 2; d++) pts.push(i + 0.25 + a * 0.5, j + 0.25 + c * 0.5, k + 0.25 + d * 0.5);
   }
   const G0 = Q0.has('grav0') ? [0, 0, 0] : [0, -9.81, 0];
@@ -151,12 +152,12 @@ const t0 = performance.now();
 }
 
 if (window.ONLY1) { window.done = true; throw new Error('only1'); }
-// ---------- 1b) 発散しない: 貨物の角と薄い水の層がある第 1 船倉で 20 秒 ----------
+// ---------- 1b) 発散しない: 缶の角と薄い水の層がある第1缶室で 20 秒 ----------
 // （粘性の項に実際の体積 1/ρ を使っていたときは、水面の低密度の粒子から発散して 20 秒で全体が 30 m/s になった）
 {
   const b = buildShipGrid(h, allClosed);
   fluid.setGrid(V.packForGpu(b.grid));
-  const room = R('第1船倉');
+  const room = R('第1缶室');
   const pts = fillRoom(b.grid, room, 0.4);
   fluid.init(new Float32Array(pts));
   await run(20);
@@ -164,11 +165,11 @@ if (window.ONLY1) { window.done = true; throw new Error('only1'); }
   const sp = ps.map((p) => p.s).sort((a, c) => a - c);
   check('安定: 20 秒後も発散しない（速さの中央値 < 1 m/s、最大 < 15 m/s）', sp[sp.length >> 1] < 1 && sp.at(-1) < 15 && !nan(ps), `中央値 ${sp[sp.length >> 1].toFixed(2)} / 最大 ${sp.at(-1).toFixed(1)} m/s`);
 }
-// ---------- 2) 水密: 第2船倉を 70% にして 25° 傾けた重力で隔壁に押し付ける → 隣へ漏れない ----------
+// ---------- 2) 水密: 後部弾薬庫を 70% にして 25° 傾けた重力で隔壁に押し付ける → 隣へ漏れない ----------
 {
   const b = buildShipGrid(h, allClosed);
   fluid.setGrid(V.packForGpu(b.grid));
-  const room = R('第2船倉');
+  const room = R('後部弾薬庫');
   const pts = fillRoom(b.grid, room, 0.7);
   fluid.init(new Float32Array(pts));
   const a = 25 * Math.PI / 180;
@@ -176,31 +177,37 @@ if (window.ONLY1) { window.done = true; throw new Error('only1'); }
   await run(4, { gravity: [0, -9.81 * Math.cos(a), -9.81 * Math.sin(a)] });
   const ps = await particles();
   const cnt = countBy(b.grid, ps);
-  // 同じ水密区画の部屋（ラッタル口・扉でつながる通路や船室）へ行くのは正しい。別の区画へ出たら漏れ
+  // 同じ水密区画の部屋（揚弾口でつながる士官室）へ行くのは正しい。別の区画へ出たら漏れ
   const comp = Lo.ROOMS[room].comp;
   const leaked = [...cnt].filter(([r]) => r !== V.NO_ROOM && Lo.ROOMS[r].comp !== comp).reduce((s, [, n]) => s + n, 0);
   check('水密: 傾けても別の水密区画に漏れない', leaked === 0, JSON.stringify([...cnt]));
   check('水密: 粒子が消えない', ps.length === pts.length / 3, `${ps.length} / ${pts.length / 3}`);
 }
 
-// ---------- 3) 扉: 機関室に水、D3（機関室↔操舵機室）を開ける → 両室の水位がそろう ----------
+// ---------- 3) 扉: 前部機械室に水、D3（前部↔後部機械室）を開ける → 両室の水位がそろう ----------
+// 格子 0.5 m では扉のような細い開口の流れが、せきの流量式の見積もりの 1/3〜1/4 と遅い（流量は扉の幅に比例する: 幅 1.0 / 1.6 / 2.6 m で
+// 10 秒に 603 / 1083 / 1758 粒子。粘性を 1/10 にしても変わらない）。機械室は床面積 ~80 m² と広いので、そろうまで 60 秒みる。
+// 水位は粒子の上端ではなく部屋の水量から求める（3b と同じ。機器の塊の上に残る薄い水や水しぶきで上端がぶれない）
 {
   const b = buildShipGrid(h, { ...allClosed, doors: { ...allClosed.doors, D3: true } });
   fluid.setGrid(V.packForGpu(b.grid));
-  const er = R('機関室'), sg = R('操舵機室');
+  const er = R('前部機械室'), sg = R('後部機械室');
+  const nodes = F.roomNodes(b.grid, Lo.ROOMS.length);
+  const n0 = fillRoom(b.grid, er, 0.28).length / 3;
   fluid.init(new Float32Array(fillRoom(b.grid, er, 0.28)));
-  await run(25);
+  await run(+(Q0.get('doorT') ?? 60));
   const ps = await particles();
-  const top = (r) => { const ys = ps.filter((p) => roomOfP(b.grid, p) === r).map((p) => p.y).sort((a, c) => a - c); return ys.length ? ys[Math.floor(ys.length * 0.98)] : NaN; };
-  const d = Math.abs(top(er) - top(sg)) * h;
-  check('扉: 開いた水密扉を通って隣室へ流れ、水位がそろう（差 < 0.3 m）', d < 0.3, `機関室 ${(top(er) * h).toFixed(2)} / 操舵機室 ${(top(sg) * h).toFixed(2)}（格子の y、m）`);
+  const cnt = countBy(b.grid, ps);
+  const lv = (r) => F.waterLevel(nodes[r], h, (cnt.get(r) ?? 0) * Vp, [0, 1, 0]);
+  const d = Math.abs(lv(er) - lv(sg));
+  check('扉: 開いた水密扉を通って隣室へ流れ、水位がそろう（差 < 0.3 m）', d < 0.3 && (cnt.get(sg) ?? 0) > n0 * 0.3, `前部機械室 ${lv(er).toFixed(2)} / 後部機械室 ${lv(sg).toFixed(2)} m（${cnt.get(er) ?? 0} / ${cnt.get(sg) ?? 0} 粒子）`);
 }
 
-// ---------- 3b) 空気圧: 同じ扉で、操舵機室の空気だけ 0.6 m 水頭だけ高い → 操舵機室の水面が 0.6 m 低いところで釣り合う ----------
+// ---------- 3b) 空気圧: 同じ扉で、後部機械室の空気だけ 0.6 m 水頭だけ高い → 後部機械室の水面が 0.6 m 低いところで釣り合う ----------
 {
   const b = buildShipGrid(h, { ...allClosed, doors: { ...allClosed.doors, D3: true } });
   fluid.setGrid(V.packForGpu(b.grid));
-  const er = R('機関室'), sg = R('操舵機室');
+  const er = R('前部機械室'), sg = R('後部機械室');
   const nodes = F.roomNodes(b.grid, Lo.ROOMS.length);
   const H0 = +(Q0.get('airh') ?? 0.6);
   let nInit = 0;
@@ -210,7 +217,7 @@ if (window.ONLY1) { window.done = true; throw new Error('only1'); }
     const heads = new Array(V.MAX_ROOMS).fill(0);
     heads[sg] = head;
     fluid.setRoomHeads(heads, h);
-    // 両室を同じ高さ（船体座標 y = 2.2 m）まで満たして始める（釣り合いに要る移動を小さくし、狭い扉越しの流れを待たずに済む）
+    // 両室を同じ高さ（船体座標 y = 2.2 m、扉の途中）まで満たして始める（釣り合いに要る移動を小さくし、狭い扉越しの流れを待たずに済む）
     const pts = [];
     for (let n = 0; n < b.grid.N; n++) {
       if (b.grid.type[n] !== V.NODE_FLUID || (b.grid.room[n] !== er && b.grid.room[n] !== sg)) continue;
@@ -228,14 +235,14 @@ if (window.ONLY1) { window.done = true; throw new Error('only1'); }
   };
   const base = await levelDiff(0), r = await levelDiff(H0);
   const d = r.d - base.d;
-  check(`空気圧: 扉の向こうの空気が ${H0} m 水頭だけ高いと、そちらの水面がその分低い（±25%）`, Math.abs(d - H0) < 0.25 * H0 && !nan(r.ps), `水位差 ${r.d.toFixed(2)} m − 段差なし ${base.d.toFixed(2)} m = ${d.toFixed(2)} m（機関室 ${r.er.toFixed(2)} / 操舵機室 ${r.sg.toFixed(2)}）`);
+  check(`空気圧: 扉の向こうの空気が ${H0} m 水頭だけ高いと、そちらの水面がその分低い（±25%）`, Math.abs(d - H0) < 0.25 * H0 && !nan(r.ps), `水位差 ${r.d.toFixed(2)} m − 段差なし ${base.d.toFixed(2)} m = ${d.toFixed(2)} m（前部機械室 ${r.er.toFixed(2)} / 後部機械室 ${r.sg.toFixed(2)}）`);
   check('空気圧: 粒子が消えない', r.ps.length === nInit, `${r.ps.length} / ${nInit}`);
   fluid.setRoomHeads(new Array(V.MAX_ROOMS).fill(0), h);
 }
 
-// ---------- 4) 流入: 空の船に破口 → 生成した分だけ粒子が増え、破口の部屋に溜まる ----------
+// ---------- 4) 流入: 空の艦に破口 → 生成した分だけ粒子が増え、破口の部屋に溜まる ----------
 {
-  const bb = breachAt(3.5, 1.6, 7.8, 1.6, 1.2);
+  const bb = breachAt(5, 3.0, 7.5, 1.6, 1.2); // 第2缶室の舷側
   const b = buildShipGrid(h, { ...allClosed, breaches: [bb] });
   fluid.setGrid(V.packForGpu(b.grid));
   fluid.init(new Float32Array(0));

@@ -11,61 +11,60 @@ const el = (tag, attrs = {}, parent = null) => {
   return e;
 };
 
-// 側面図の中での部屋の矩形。上段（第 2 甲板より上の居住区）は左舷・通路・右舷の 3 段に分けて描く
+// 側面図の中での部屋の矩形（部屋はどれも艦の全幅なので、側面では重ならない）。船首・船尾の端は外形の線の内側に収める
 export function roomRect(r) {
   const b = r.box;
-  const zc = (Math.max(b.z[0], H.Z_MIN) + Math.min(b.z[1], H.Z_MAX)) / 2;
-  const z0 = Math.max(b.z[0], H.Z_MIN + 0.3), z1 = Math.min(b.z[1], H.Z_MAX - 0.6);
-  let y0 = Lo.resolveY(b.y[0], zc), y1 = Lo.resolveY(b.y[1], zc);
-  if (r.comp === 'H2' && y0 === Lo.DECK2) {
-    const lane = b.x[0] >= 0.5 ? 2 : b.x[1] <= -0.5 ? 0 : 1; // 0 右舷, 1 通路, 2 左舷
-    const hgt = (y1 - y0) / 3;
-    y0 = y0 + lane * hgt; y1 = y0 + hgt;
-  }
-  return { z0, z1, y0, y1 };
+  const z0 = Math.max(b.z[0], H.Z_MIN + 1.2), z1 = Math.min(b.z[1], H.Z_MAX - 2.5);
+  const zc = (z0 + z1) / 2;
+  return { z0, z1, y0: Math.max(Lo.resolveY(b.y[0], zc), H.keelY(zc)), y1: Lo.resolveY(b.y[1], zc) };
 }
 
-// 部屋の中の文字の行（船体座標 m、文字の基線）: 名前は上端から 0.5 下、浸水率は下端から 0.2 上。
-// 空気圧は名前の下の行に出す（名前と同じ行の右端だと、幅の狭い部屋では名前に、低い部屋では浸水率に重なる）。
-// 3 行が入らない低い部屋（上段の居住区の 3 段、高さ 0.67 m）は null: 文字は出さず、部屋の色とツールチップで示す
-export const PRES_ROW = 1.0; // 空気圧の行: 上端から
-export const PRES_MIN_H = 1.8; // これより低い部屋には空気圧の行を置かない（名前・空気圧・浸水率の 3 行が入る高さ + 余裕）
+// 部屋の中の文字（船体座標 m）。字の大きさ（SSOT: 描画とテストが使う）と行の位置（基線）:
+// 名前は上端から NAME_ROW 下、浸水率は下端から PCT_ROW 上。空気圧は名前の下の行（同じ行の右端だと幅の狭い部屋で名前に重なる）。
+// 3 行が入らない部屋（下甲板の下の弾薬庫・倉庫）は空気圧の文字を出さず、部屋の色とツールチップで示す。
+// 名前と浸水率の 2 行も入らない低い部屋（船尾の倉庫）は浸水率を名前と同じ行の右端に出す
+export const FONT = { label: 0.9, pct: 1.0, pres: 0.9 };
+export const NAME_ROW = 1.0, PCT_ROW = 0.35;
+export const STACK_MIN_H = NAME_ROW + FONT.label * 0.25 + PCT_ROW + FONT.pct * 0.8; // 名前と浸水率を上下に分けて置ける高さ
+// 浸水率の行の基線: 高い部屋は下端から PCT_ROW 上、低い部屋は名前と同じ行
+export const pctBase = (q) => (q.y1 - q.y0 >= STACK_MIN_H ? q.y0 + PCT_ROW : q.y1 - NAME_ROW);
+export const PRES_ROW = 2.05; // 空気圧の行: 上端から
+export const PRES_MIN_H = 3.43; // これより低い部屋には空気圧の行を置かない（名前・空気圧・浸水率の 3 行が入る高さ）
 export function pressureSlot(q) {
-  return q.y1 - q.y0 >= PRES_MIN_H ? { x: q.z0 + 0.15, y: q.y1 - PRES_ROW } : null;
+  return q.y1 - q.y0 >= PRES_MIN_H ? { x: q.z0 + 0.3, y: q.y1 - PRES_ROW } : null;
 }
 
 export function createProfile(svg, { onDoor }) {
-  svg.setAttribute('viewBox', `${H.Z_MIN - 0.8} ${-Lo.HOUSE.top - 1.2} ${H.L + 1.6} ${Lo.HOUSE.top + 2.4}`);
+  svg.setAttribute('viewBox', `${H.Z_MIN - 1.5} ${-H.Y_MAX - 1.2} ${H.L + 3} ${H.Y_MAX + 2.4}`);
   const g = el('g', { transform: 'scale(1,-1)' }, svg); // y を上向きに
   // 船体の外形
   const pts = [];
-  for (let z = H.Z_MIN; z <= H.Z_MAX; z += 0.25) pts.push([z, H.deckY(z)]);
+  for (const z of H.stations(520)) pts.push([z, H.deckY(z)]);
   for (let z = H.Z_MAX; z >= H.Z_MIN; z -= 0.25) { let y = H.keelY(z); if (H.halfBreadth(z, y + 0.01) < 0) { y = H.keelY(z) + 0.01; while (y < H.deckY(z) && H.halfBreadth(z, y) < 0) y += 0.05; } pts.push([z, y]); }
   el('path', { class: 'hull', d: 'M' + pts.map((p) => p.join(',')).join('L') + 'Z' }, g);
-  el('rect', { class: 'hull', x: Lo.HOUSE.z0, y: H.D + 0.2, width: Lo.HOUSE.z1 - Lo.HOUSE.z0, height: Lo.HOUSE.top - H.D - 0.2 }, g);
 
   const rooms = Lo.ROOMS.map((r, i) => {
     const q = roomRect(r);
     const rect = el('rect', { class: 'room', x: q.z0, y: q.y0, width: q.z1 - q.z0, height: q.y1 - q.y0 }, g);
     const fill = el('rect', { class: 'fill', x: q.z0, y: q.y0, width: q.z1 - q.z0, height: 0 }, g);
     const title = el('title', {}, rect); title.textContent = r.name;
-    const lab = el('text', { class: 'label', x: q.z0 + 0.15, y: -(q.y1 - 0.5), transform: 'scale(1,-1)' }, g);
-    lab.textContent = r.name.replace('船室 ', '');
-    const pct = el('text', { class: 'pct', x: q.z1 - 0.15, y: -(q.y0 + 0.2), 'text-anchor': 'end', transform: 'scale(1,-1)' }, g);
+    const lab = el('text', { class: 'label', x: q.z0 + 0.3, y: -(q.y1 - NAME_ROW), 'font-size': FONT.label, transform: 'scale(1,-1)' }, g);
+    lab.textContent = r.name;
+    const pct = el('text', { class: 'pct', x: q.z1 - 0.3, y: -pctBase(q), 'font-size': FONT.pct, 'text-anchor': 'end', transform: 'scale(1,-1)' }, g);
     // 閉じ込められた空気の圧力（ゲージ、bar）。大きいときだけ名前の下に出す（行が無い部屋はツールチップだけ）
     const slot = pressureSlot(q);
-    const pres = slot && el('text', { class: 'pres', x: slot.x, y: -slot.y, transform: 'scale(1,-1)' }, g);
+    const pres = slot && el('text', { class: 'pres', x: slot.x, y: -slot.y, 'font-size': FONT.pres, transform: 'scale(1,-1)' }, g);
     return { i, q, rect, fill, pct, pres, title, name: r.name };
   });
-  for (const z of Lo.BULKHEADS) el('line', { class: 'bulk', x1: z, x2: z, y1: H.TANK_TOP, y2: H.deckY(z) }, g);
-  el('line', { class: 'bulk', x1: H.Z_MIN, x2: H.Z_MAX, y1: H.TANK_TOP, y2: H.TANK_TOP }, g);
-  const wl = el('line', { class: 'wl', x1: H.Z_MIN - 0.8, x2: H.Z_MAX + 0.8 }, g);
+  for (const z of Lo.BULKHEADS) el('line', { class: 'bulk', x1: z, x2: z, y1: Math.max(H.TANK_TOP, H.keelY(z)), y2: H.upperY(z) }, g);
+  el('line', { class: 'bulk', x1: Lo.MACHINERY.z[0], x2: Lo.MACHINERY.z[1], y1: H.TANK_TOP, y2: H.TANK_TOP }, g);
+  const wl = el('line', { class: 'wl', x1: H.Z_MIN - 1.5, x2: H.Z_MAX + 1.5 }, g);
 
   // 扉（水密扉と船外への開口）
   const doors = new Map();
   const addDoor = (id, z, y0, y1, title) => {
     const gg = el('g', { class: 'door' }, g);
-    el('rect', { x: z - 0.28, y: y0, width: 0.56, height: y1 - y0, rx: 0.1 }, gg);
+    el('rect', { x: z - 0.6, y: y0, width: 1.2, height: y1 - y0, rx: 0.2 }, gg);
     el('title', {}, gg).textContent = title;
     // キーボードでも開閉できるように（左パネルと同じ操作をここからもできる）
     gg.setAttribute('tabindex', '0'); gg.setAttribute('role', 'button'); gg.setAttribute('aria-label', `${title}（開閉）`);
@@ -73,11 +72,11 @@ export function createProfile(svg, { onDoor }) {
     gg.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDoor(id); } });
     doors.set(id, gg);
   };
-  for (const d of Lo.DOORS.filter((x) => x.wt)) addDoor(d.id, (d.box.z[0] + d.box.z[1]) / 2, Lo.resolveY(d.box.y[0], 0), Lo.resolveY(d.box.y[1], 0), d.name);
+  for (const d of Lo.DOORS.filter((x) => x.wt)) { const zc = (d.box.z[0] + d.box.z[1]) / 2; addDoor(d.id, zc, Lo.resolveY(d.box.y[0], zc), Lo.resolveY(d.box.y[1], zc), d.name); }
   for (const o of Lo.SEA_OPENINGS) {
     const z = o.center[2], y = o.center[1];
-    if (o.kind === 'hatch' || o.kind === 'vent') addDoor(o.id, z, y - 0.15, y + 0.35, o.name);
-    else addDoor(o.id, o.id === 'o5' ? z : z + (o.center[0] > 0 ? 0.35 : -0.35), y - o.half[1], y + o.half[1], o.name);
+    if (o.normal[1] > 0.5) addDoor(o.id, z, y - 0.3, y + 0.7, o.name); // 露天甲板の開口
+    else addDoor(o.id, z + (o.center[0] > 0 ? 0.7 : -0.7), y - o.half[1], y + o.half[1], o.name); // 船首楼の後端の扉（左右の舷で並べる）
   }
   const breachLayer = el('g', {}, g);
 

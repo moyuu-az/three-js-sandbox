@@ -38,105 +38,73 @@ function rustStreak(g, x, y, len, wid, alpha) {
 }
 
 // ================= 船体外板 =================
-// u の前半が左舷、後半が右舷（どちらも文字が正しく読めるよう z の向きを逆にする）。v は船底 → ブルワーク上端
-export const BULWARK = 1.0;
-export const HULL_TEX_Y = [H.Y_MIN, H.Y_MAX + BULWARK];
+// u の前半が左舷、後半が右舷（どちらも船首が同じ向きに読めるよう z の向きを逆にする）。v は船底 → 最も高い甲板
+export const HULL_TEX_Y = [H.Y_MIN, H.Y_MAX];
 export function hullUV(side, z, y) {
   const f = (z - H.Z_MIN) / H.L;
   return [side > 0 ? 0.5 * (1 - f) : 0.5 + 0.5 * f, (y - HULL_TEX_Y[0]) / (HULL_TEX_Y[1] - HULL_TEX_Y[0])];
 }
 
-export function hullTextures(draft, name = 'KAIYO MARU') {
+// 旧日本海軍の駆逐艦の塗装: 外舷は軍艦色（灰色）、水線に黒い帯、艦底は赤褐色の艦底塗料。舷窓は船首楼と後部の居住区
+export function hullTextures(draft) {
   const W = 8192, Hh = 1024;
   const [c, g] = canvas(W, Hh), [bc, bg] = canvas(W, Hh), [rc, rg] = canvas(W, Hh);
   bg.fillStyle = '#808080'; bg.fillRect(0, 0, W, Hh);
   const px = (side, z) => hullUV(side, z, 0)[0] * W;
   const py = (y) => (1 - hullUV(1, 0, y)[1]) * Hh;
   const ppm = (W / 2) / H.L; // px / m
-  const boot = [draft - 0.25, draft + 0.45]; // ブーツトップ（喫水線まわりの黒帯）
+  const boot = [draft - 0.3, draft + 0.35]; // 水線の黒帯
 
   for (const side of [1, -1]) {
     const x0 = side > 0 ? 0 : W / 2;
-    // 塗り分け: 外舷（紺灰）/ ブーツトップ（黒）/ 船底塗料（赤）
-    g.fillStyle = '#22303c'; g.fillRect(x0, 0, W / 2, Hh);
-    g.fillStyle = '#121416'; g.fillRect(x0, py(boot[1]), W / 2, py(boot[0]) - py(boot[1]));
-    g.fillStyle = '#8b2c22'; g.fillRect(x0, py(boot[0]), W / 2, Hh - py(boot[0]));
-    rg.fillStyle = '#7a7a7a'; rg.fillRect(x0, 0, W / 2, Hh); // 粗さ: 外舷 0.48
-    rg.fillStyle = '#b8b8b8'; rg.fillRect(x0, py(boot[0]), W / 2, Hh - py(boot[0])); // 船底塗料はつや消し
-    // ブルワーク上端の白線と、甲板の高さの線（ここに外板の継ぎ目がある）
+    g.fillStyle = '#434a4f'; g.fillRect(x0, 0, W / 2, Hh);
+    g.fillStyle = '#16181a'; g.fillRect(x0, py(boot[1]), W / 2, py(boot[0]) - py(boot[1]));
+    g.fillStyle = '#6e2b1f'; g.fillRect(x0, py(boot[0]), W / 2, Hh - py(boot[0]));
+    rg.fillStyle = '#8a8a8a'; rg.fillRect(x0, 0, W / 2, Hh);
+    rg.fillStyle = '#bcbcbc'; rg.fillRect(x0, py(boot[0]), W / 2, Hh - py(boot[0]));
+    // 甲板の縁の線（ガンネル）
     for (let x = 0; x < W / 2; x += 2) {
-      const f = x / (W / 2), z = side > 0 ? H.Z_MAX - f * H.L : H.Z_MIN + f * H.L, dy = H.deckY(z);
-      g.fillStyle = '#e9e7e0'; g.fillRect(x0 + x, py(dy + BULWARK), 2, py(dy + BULWARK - 0.12) - py(dy + BULWARK));
-      g.fillStyle = '#10161c'; g.fillRect(x0 + x, py(dy + 0.02), 2, 3);
-      bg.fillStyle = '#404040'; bg.fillRect(x0 + x, py(dy + 0.02), 2, 3);
+      const f = x / (W / 2), z = side > 0 ? H.Z_MAX - f * H.L : H.Z_MIN + f * H.L;
+      g.fillStyle = '#3c4246'; g.fillRect(x0 + x, py(H.deckY(z)) , 2, 4);
+      bg.fillStyle = '#404040'; bg.fillRect(x0 + x, py(H.deckY(z)), 2, 4);
     }
-    // 外板の継ぎ目（横: 板の列、縦: 6 m ごとの突き合わせ）と溶接ビード
-    g.strokeStyle = 'rgba(0,0,0,0.28)'; g.lineWidth = 2;
+    // 外板の継ぎ目（横: 板の列、縦: 6 m ごと）
+    g.strokeStyle = 'rgba(0,0,0,0.22)'; g.lineWidth = 2;
     bg.strokeStyle = '#a8a8a8'; bg.lineWidth = 3;
-    for (const y of [0.9, 1.9, draft + 0.9, draft + 1.9, 4.6]) for (const k of [g, bg]) { k.beginPath(); k.moveTo(x0, py(y)); k.lineTo(x0 + W / 2, py(y)); k.stroke(); }
+    for (const y of [1.2, 2.5, draft + 1.0, draft + 2.2, H.D + 1.3]) for (const k of [g, bg]) { k.beginPath(); k.moveTo(x0, py(y)); k.lineTo(x0 + W / 2, py(y)); k.stroke(); }
     for (let z = H.Z_MIN + 3; z < H.Z_MAX; z += 6) for (const k of [g, bg]) { k.beginPath(); k.moveTo(px(side, z), 0); k.lineTo(px(side, z), Hh); k.stroke(); }
-    // フレーム（肋骨）の溶接痕がうっすら浮く「痩せ馬」
-    bg.fillStyle = 'rgba(96,96,96,0.25)';
-    for (let z = H.Z_MIN + 0.3; z < H.Z_MAX; z += 0.6) bg.fillRect(px(side, z) - 3, py(H.D - 0.2), 6, py(0.4) - py(H.D - 0.2));
-    // 舷窓（居住区の外板）
-    for (let z = -3.8; z < 3.8; z += 1.4) {
-      const x = px(side, z), y = py(4.1), r = 0.17 * ppm;
-      g.fillStyle = '#9a8a62'; g.beginPath(); g.arc(x, y, r * 1.3, 0, 7); g.fill();
-      g.fillStyle = '#0a1018'; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
-      g.fillStyle = 'rgba(170,200,230,0.45)'; g.beginPath(); g.arc(x - r * 0.3, y - r * 0.3, r * 0.3, 0, 7); g.fill();
-      bg.fillStyle = '#d0d0d0'; bg.beginPath(); bg.arc(x, y, r * 1.3, 0, 7); bg.fill();
-      rg.fillStyle = '#202020'; rg.beginPath(); rg.arc(x, y, r, 0, 7); rg.fill();
-      rustStreak(g, x, y + r * 1.3, rand(20, 70), 5, 0.35);
-    }
-    // 錨の出口（ホースパイプ）と錆
-    const hx = px(side, 12.7), hy = py(H.deckY(12.7) - 0.9);
-    rustStreak(g, hx, hy, 260, 60, 0.75);
-    g.fillStyle = '#060606'; g.beginPath(); g.ellipse(hx, hy, 34, 26, 0, 0, 7); g.fill();
-    bg.fillStyle = '#e0e0e0'; bg.beginPath(); bg.ellipse(hx, hy, 42, 34, 0, 0, 7); bg.fill();
-    // 排水口（スカッパー）からの錆だれ
-    for (let z = H.Z_MIN + 1.5; z < H.Z_MAX - 2; z += rand(2.2, 4)) {
-      const x = px(side, z), y = py(H.deckY(z) + 0.1);
-      g.fillStyle = '#080808'; g.fillRect(x - 10, y - 6, 20, 10);
-      rustStreak(g, x, y + 4, rand(80, 260), rand(10, 22), rand(0.35, 0.7));
-    }
-    for (let i = 0; i < 90; i++) rustStreak(g, x0 + rand(20, W / 2 - 20), rand(py(H.D), py(boot[1] + 0.3)), rand(20, 140), rand(2, 7), rand(0.15, 0.45));
-    // 喫水線付近の汚れ（藻・水垢）
+    // 舷窓（船首楼の居住区と、後部の下甲板の居住区）
+    const port = (z, y) => {
+      const x = px(side, z), yy = py(y), r = 0.2 * ppm;
+      g.fillStyle = '#4a4f52'; g.beginPath(); g.arc(x, yy, r * 1.4, 0, 7); g.fill();
+      g.fillStyle = '#0a1018'; g.beginPath(); g.arc(x, yy, r, 0, 7); g.fill();
+      bg.fillStyle = '#d0d0d0'; bg.beginPath(); bg.arc(x, yy, r * 1.4, 0, 7); bg.fill();
+      rg.fillStyle = '#202020'; rg.beginPath(); rg.arc(x, yy, r, 0, 7); rg.fill();
+      rustStreak(g, x, yy + r * 1.4, rand(10, 40), 3, 0.25);
+    };
+    for (let z = H.FC_Z + 3; z < 50; z += 2.2) port(z, H.upperY(z) + 1.3);
+    for (let z = -55; z < -24; z += 2.2) port(z, H.upperY(z) - 1.2);
+    // 錨の出口（ホースパイプ）
+    const hx = px(side, 59.8), hy = py(H.deckY(59.8) - 1.1);
+    rustStreak(g, hx, hy, 120, 26, 0.6);
+    g.fillStyle = '#060606'; g.beginPath(); g.ellipse(hx, hy, 16, 12, 0, 0, 7); g.fill();
+    bg.fillStyle = '#e0e0e0'; bg.beginPath(); bg.ellipse(hx, hy, 20, 16, 0, 0, 7); bg.fill();
+    for (let i = 0; i < 70; i++) rustStreak(g, x0 + rand(20, W / 2 - 20), rand(py(H.D), py(boot[1] + 0.3)), rand(10, 60), rand(1, 3), rand(0.1, 0.3));
+    // 喫水線付近の汚れ
     const scum = g.createLinearGradient(0, py(draft + 0.25), 0, py(draft - 0.3));
-    scum.addColorStop(0, 'rgba(70,80,45,0)'); scum.addColorStop(0.5, 'rgba(70,80,45,0.4)'); scum.addColorStop(1, 'rgba(70,80,45,0)');
+    scum.addColorStop(0, 'rgba(70,80,45,0)'); scum.addColorStop(0.5, 'rgba(70,80,45,0.35)'); scum.addColorStop(1, 'rgba(70,80,45,0)');
     g.fillStyle = scum; g.fillRect(x0, py(draft + 0.25), W / 2, py(draft - 0.3) - py(draft + 0.25));
-    // 喫水標（船首・船尾・中央、0.2 m ごと、m の位置に M）
-    g.fillStyle = '#f2f2f2'; g.textAlign = 'center'; g.font = `bold ${Math.round(0.13 * ppm)}px sans-serif`;
-    for (const z of [13.2, -14.2, 0.6]) for (let k = 2; k <= 44; k += 2) {
-      const y = py(k / 10) + 0.06 * ppm;
-      g.fillText(k % 10 === 0 ? `${k / 10}M` : String(k % 10), px(side, z), y);
+    // 喫水標（艦首・艦尾・中央、0.2 m ごと、m の位置に M）
+    g.fillStyle = '#f2f2f2'; g.textAlign = 'center'; g.font = `bold ${Math.round(0.16 * ppm)}px sans-serif`;
+    for (const z of [58, -60, 0.6]) for (let k = 2; k <= 60; k += 2) {
+      if (H.halfBreadth(z, k / 10) < 0) continue;
+      g.fillText(k % 10 === 0 ? `${k / 10}M` : String(k % 10), px(side, z), py(k / 10) + 0.06 * ppm);
     }
-    // 満載喫水線標（プリムソルマーク）
-    const pmx = px(side, -0.8), pmy = py(draft + 0.55);
-    g.strokeStyle = '#f2f2f2'; g.lineWidth = 5;
-    g.beginPath(); g.arc(pmx, pmy, 0.2 * ppm, 0, 7); g.stroke();
-    g.fillStyle = '#f2f2f2'; g.fillRect(pmx - 0.3 * ppm, pmy - 3, 0.6 * ppm, 6);
-    g.fillRect(pmx - 0.3 * ppm, py(draft + 0.95) - 3, 0.6 * ppm, 6);
-    g.font = `bold ${Math.round(0.12 * ppm)}px sans-serif`; g.fillText('N', pmx - 0.24 * ppm, pmy - 0.22 * ppm); g.fillText('K', pmx + 0.24 * ppm, pmy - 0.22 * ppm);
-    // 船名（船首寄り、白）
-    g.font = `bold ${Math.round(0.55 * ppm)}px "Segoe UI", sans-serif`; g.fillStyle = '#f4f1e8';
-    g.fillText(name, px(side, 9.6), py(4.25));
-    bg.font = g.font; bg.fillStyle = '#9a9a9a'; bg.textAlign = 'center'; bg.fillText(name, px(side, 9.6), py(4.25));
   }
-  grime(g, W, Hh, 120000);
+  grime(g, W, Hh, 90000, 0.05, 0.02);
   for (let i = 0; i < 40000; i++) { const v = rand(100, 160); bg.fillStyle = `rgba(${v},${v},${v},0.18)`; bg.fillRect(rand(0, W), rand(0, Hh), 2, 2); }
   for (let i = 0; i < 30000; i++) { const v = rand(90, 200); rg.fillStyle = `rgba(${v},${v},${v},0.12)`; rg.fillRect(rand(0, W), rand(0, Hh), 3, 3); }
   return { map: tex(c, { aniso: 16 }), bumpMap: tex(bc, { srgb: false }), roughnessMap: tex(rc, { srgb: false }) };
-}
-
-// 船尾（トランサム）の船名と船籍港
-export function sternTexture(name = 'KAIYO MARU', port = 'YOKOHAMA') {
-  const [c, g] = canvas(1024, 512);
-  g.fillStyle = '#22303c'; g.fillRect(0, 0, 1024, 512);
-  g.fillStyle = '#f4f1e8'; g.textAlign = 'center';
-  g.font = 'bold 92px "Segoe UI", sans-serif'; g.fillText(name, 512, 230);
-  g.font = 'bold 60px "Segoe UI", sans-serif'; g.fillText(port, 512, 330);
-  grime(g, 1024, 512, 6000);
-  return tex(c);
 }
 
 // ================= 甲板・床 =================
@@ -203,27 +171,17 @@ export function paintTexture(base = '#e9e7e0', { rust = 25, panels = 128 } = {})
   return tex(c, { repeat: true });
 }
 
-// 煙突: 下から 灰白 / 社章の帯 / 黒い頂部
+// 煙突: 軍艦色、頂部は煤で黒い帯
 export function funnelTexture() {
   const [c, g] = canvas(1024, 512);
-  g.fillStyle = '#dcd6c4'; g.fillRect(0, 0, 1024, 512);
-  g.fillStyle = '#1d4f91'; g.fillRect(0, 120, 1024, 170);
-  g.fillStyle = '#f2f2f2';
-  for (const cx of [128, 384, 640, 896]) { g.beginPath(); g.arc(cx, 205, 58, 0, 7); g.fill(); }
-  g.fillStyle = '#c8202a'; for (const cx of [128, 384, 640, 896]) { g.beginPath(); g.arc(cx, 205, 36, 0, 7); g.fill(); }
-  g.fillStyle = '#141414'; g.fillRect(0, 0, 1024, 90);
-  const soot = g.createLinearGradient(0, 90, 0, 220);
-  soot.addColorStop(0, 'rgba(0,0,0,0.55)'); soot.addColorStop(1, 'rgba(0,0,0,0)');
-  g.fillStyle = soot; g.fillRect(0, 90, 1024, 130);
+  g.fillStyle = '#474e53'; g.fillRect(0, 0, 1024, 512);
+  g.fillStyle = '#141414'; g.fillRect(0, 0, 1024, 60);
+  const soot = g.createLinearGradient(0, 60, 0, 200);
+  soot.addColorStop(0, 'rgba(0,0,0,0.6)'); soot.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = soot; g.fillRect(0, 60, 1024, 140);
+  g.strokeStyle = 'rgba(0,0,0,0.2)'; g.lineWidth = 3;
+  for (let y = 120; y < 512; y += 90) { g.beginPath(); g.moveTo(0, y); g.lineTo(1024, y); g.stroke(); }
   grime(g, 1024, 512, 10000);
-  return tex(c);
-}
-
-export function lifeboatTexture() {
-  const [c, g] = canvas(512, 256);
-  g.fillStyle = '#e8641c'; g.fillRect(0, 0, 512, 256);
-  g.fillStyle = '#f4f4f4'; g.fillRect(0, 150, 512, 20);
-  grime(g, 512, 256, 3000);
   return tex(c);
 }
 
@@ -278,11 +236,17 @@ export function softDotTexture() {
   return tex(c, { srgb: false });
 }
 
-// 船尾旗（日章旗）
+// 艦尾旗（軍艦旗）: 日の丸を旗竿側に寄せ、16 条の光線
 export function flagTexture() {
-  const [c, g] = canvas(192, 128);
-  g.fillStyle = '#f7f7f5'; g.fillRect(0, 0, 192, 128);
-  g.fillStyle = '#bc002d'; g.beginPath(); g.arc(96, 64, 38, 0, 7); g.fill();
+  const [c, g] = canvas(288, 192);
+  g.fillStyle = '#f7f7f5'; g.fillRect(0, 0, 288, 192);
+  const cx = 288 * 0.45, cy = 96;
+  g.fillStyle = '#bc002d';
+  for (let k = 0; k < 16; k++) {
+    const a = (k / 16) * Math.PI * 2, da = Math.PI / 32;
+    g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a - da) * 400, cy + Math.sin(a - da) * 400); g.lineTo(cx + Math.cos(a + da) * 400, cy + Math.sin(a + da) * 400); g.fill();
+  }
+  g.beginPath(); g.arc(cx, cy, 44, 0, 7); g.fill();
   return tex(c);
 }
 

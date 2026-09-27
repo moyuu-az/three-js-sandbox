@@ -4,24 +4,23 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Vector3, Quaternion } from 'three';
 import * as H from './hull.js';
-import * as Lo from './layout.js';
 import * as W from './waves.js';
 import * as MP from './massprops.js';
 
 export const RHO = 1025; // 海水の密度 [kg/m³]
 export const G = W.G;
-export const SEABED_Y = -38;
-export const DESIGN_DRAFT = 2.6; // 設計喫水 [m]（船体中央のキールから）
-export const CELL = 0.5; // 浮力セルの一辺 [m]
+export const SEABED_Y = -60;
+export const DESIGN_DRAFT = 4.14; // 設計喫水 [m]（船体中央のキールから）。島風の公試状態（燃料 2/3）
+export const CELL = 0.8; // 浮力セルの一辺 [m]（全長 130 m の船で ~1.3 万個）
+export const GM = 0.95; // 設計喫水での横メタセンタ高さ [m]（友鶴事件後の駆逐艦の復原性の目安、推定）
 export const DT = 1 / 60;
 
-const envelope = (x, y, z) => H.inside(x, y, z) || Lo.inHouse(x, y, z); // 水密の外殻（船体 + 甲板室 1 層目）
-const cells0 = H.buildCells(CELL, envelope, Lo.HOUSE.top);
+const cells0 = H.buildCells(CELL); // 水密の外殻（船体。船首楼を含む）
 export const ENVELOPE_VOLUME = cells0.length * CELL ** 3;
-const design = H.displacement(H.buildCells(CELL), CELL, DESIGN_DRAFT);
+const design = H.displacement(cells0, CELL, DESIGN_DRAFT);
 export const SHIP_MASS = RHO * design.v; // 空船 + 積荷 + 燃料（設計喫水で釣り合う重さ）
-// 重心: 前後は浮心に合わせて水平に浮かせる。高さ KG は GM ≈ 0.7 m になる値（小型貨物船の典型）
-export const SHIP_COM = [0, 2.75, design.lcb];
+// 重心: 前後は浮心に合わせて水平に浮かせる。高さ KG = KM − GM（KM = KB + BM、BM = 水線面の横二次モーメント ÷ 排水量）
+export const SHIP_COM = [0, design.kb + H.waterplaneInertia(DESIGN_DRAFT) / design.v - GM, design.lcb];
 export const SHIP_INERTIA = [SHIP_MASS * (0.26 * H.L) ** 2, SHIP_MASS * (0.27 * H.L) ** 2, SHIP_MASS * (0.36 * H.B) ** 2, 0, 0, 0];
 
 // 流体抵抗。LIN: 没水体積あたりの線形減衰（上下揺れが臨界減衰の 3 割程度）。QUAD: 投影面積あたりの形状抵抗係数
@@ -39,10 +38,7 @@ export async function createSim({ waves = [], seabedY = SEABED_Y } = {}) {
   const pts = [];
   for (const row of H.surfaceGrid(60, 10)) for (const p of row) pts.push(p.hb, p.y, p.z, -p.hb, p.y, p.z);
   const hullCollider = world.createCollider(RAPIER.ColliderDesc.convexHull(new Float32Array(pts)).setDensity(0).setFriction(0.6), body);
-  const hz = (Lo.HOUSE.z1 - Lo.HOUSE.z0) / 2;
-  world.createCollider(RAPIER.ColliderDesc.cuboid(Lo.HOUSE.hw, (Lo.HOUSE.top - H.D) / 2, hz)
-    .setTranslation(0, (Lo.HOUSE.top + H.D) / 2, (Lo.HOUSE.z0 + Lo.HOUSE.z1) / 2).setDensity(0), body);
-  world.createCollider(RAPIER.ColliderDesc.cuboid(400, 1, 400).setTranslation(0, seabedY - 1, 0).setFriction(0.8));
+  world.createCollider(RAPIER.ColliderDesc.cuboid(600, 1, 600).setTranslation(0, seabedY - 1, 0).setFriction(0.8));
 
   const ship = { mass: SHIP_MASS, com: SHIP_COM, inertia: SHIP_INERTIA };
   let water = { mass: 0, com: [0, 0, 0], inertia: [0, 0, 0, 0, 0, 0] };
@@ -69,7 +65,7 @@ export async function createSim({ waves = [], seabedY = SEABED_Y } = {}) {
   }
 
   const cells = Float64Array.from(cells0.flatMap((c) => [c.x, c.y, c.z]));
-  const heights = W.createHeightGrid(48, 2.5);
+  const heights = W.createHeightGrid(H.L + 24, 3); // 船の周りの海面（船が横を向いても、斜めでも覆う大きさ）
   const pos = new Vector3(), rot = new Quaternion(), lin = new Vector3(), ang = new Vector3(), com = new Vector3();
   const p = new Vector3(), r = new Vector3(), v = new Vector3(), f = new Vector3(), F = new Vector3(), T = new Vector3(), tmp = new Vector3();
   const invRot = new Quaternion();
