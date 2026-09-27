@@ -67,6 +67,42 @@ test('流量: 波が来て一時的に海面下になると入る', () => {
   assert.equal(F.openingFlow(o, ctx({ sea: () => -0.2 })).mode, 'free');
 });
 
+// ---------- 流出（艦内の水頭が外より高い開口からは水が出ていく） ----------
+// 再現: 艦首の大破口で、噴き込んだ水が破口の上端より高く溜まり、区画の空気も +0.39 bar に縮んだまま、開口が「閉じた」扱いで固まった
+test('流出: 艦内の水位が外の海面より OUT_MARGIN を超えて高い海面下の開口は開放（水が出ていく）', () => {
+  assert.equal(F.openingFlow(hole(-2), ctx({ level: F.OUT_MARGIN + 0.05 })).mode, 'free');
+  assert.equal(F.openingFlow(hole(-2), ctx({ level: 1.5 })).q, 0, '流出では粒子を作らない');
+});
+
+test('流出: 閉じ込められた空気の圧力が外の水圧を超えていれば、水面が開口より低くても開放', () => {
+  // 水面は開口の上 0.5 m、空気 2 m 水頭: 艦内 2.5 m ＞ 外 2 m + 余裕
+  assert.equal(F.openingFlow(hole(-2), ctx({ level: -1.5, airHead: 2 })).mode, 'free');
+});
+
+test('流出: 釣り合いの近く（差が OUT_MARGIN 以内）は閉じた扱いのまま（開放と閉鎖を行き来しない）', () => {
+  assert.equal(F.openingFlow(hole(-2), ctx({ level: 0 })).mode, 'closed');
+  assert.equal(F.openingFlow(hole(-2), ctx({ level: F.OUT_MARGIN - 0.05 })).mode, 'closed');
+  assert.equal(F.openingFlow(hole(-2), ctx({ level: -1, airHead: 1 + F.OUT_MARGIN - 0.05 })).mode, 'closed');
+});
+
+test('流出: 満水の部屋（水位 +∞）の海面下の開口は開放しない（開けると流れ出と再流入を繰り返す）', () => {
+  assert.equal(F.openingFlow(hole(-2), ctx({ level: Infinity })).mode, 'closed');
+});
+
+test('流出: 海面をまたぐ開口で、艦内の水が海面より上の部分に届いていれば開放（こぼれ出る）', () => {
+  const o = { area: 1, samples: [[0, -0.5, 0], [0, 0.5, 0]] };
+  assert.equal(F.openingFlow(o, ctx({ level: 0.2 })).mode, 'closed', '艦内の水が海面とほぼ同じ');
+  assert.equal(F.openingFlow(o, ctx({ level: 0.9 })).mode, 'free', '艦内の水が海面より 0.9 m 高い');
+});
+
+test('流出: 一部の点で流入していれば流入を優先する（波の谷にかかった点から出る水と、深い点から入る水が同時にあるときは入れる）', () => {
+  const o = { area: 1, samples: [[0, -5, 0], [10, -2.9, 0]] };
+  const sea = (x) => (x > 5 ? -2.5 : 0); // x = 10 の点は波の谷（海面 −2.5 m、深さ 0.4 m）
+  const r = F.openingFlow(o, ctx({ level: -1, sea }));
+  assert.equal(r.mode, 'inflow');
+  assert.ok(r.q > 0);
+});
+
 test('粒子数: 流量 × 時間 ÷ 粒子の体積。端数は持ち越して合計が合う', () => {
   let carry = 0, total = 0;
   for (let i = 0; i < 600; i++) { const r = F.particlesFor(0.01, 1 / 60, 0.001, carry); carry = r.carry; total += r.count; }

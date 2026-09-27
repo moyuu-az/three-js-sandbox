@@ -3,6 +3,8 @@
 import * as V from './voxel.js';
 
 export const CD = 0.62; // 流量係数（鋭い縁のオリフィス）
+// 艦内の水頭が外をこれ [m] 超えたら開口を開放して水を出す。釣り合いの近くで開放と閉鎖を行き来しないための幅（水位の見積もりの揺れ ~0.1 m より大きく）
+export const OUT_MARGIN = 0.3;
 
 // 部屋ごとの格子点の位置（水が入れる格子点のみ）。格子を作り直すたびに作る
 export function roomNodes(grid, roomCount) {
@@ -50,23 +52,34 @@ export function waterLevel(nodes, h, volume, up, scratch = new Float32Array(node
  * 開口部 1 つの流量。samples（開口面上の点）ごとに内外の水頭差からオリフィス式 Q = Cd·A·√(2gΔh) を足す。
  * ctx.toWorld(p) → ワールド座標、ctx.sea(x, z) → 海面高さ、ctx.up（船体座標の上向き）、ctx.level（部屋の水面）、
  * ctx.airHead（部屋の空気のゲージ圧を水頭 [m] にしたもの。閉じ込められた空気が縮むと正になり流入を押し返す。省略時 0）
- * 戻り値: q [m³/s]（正 = 流入）、mode（'free' = 海面より上で開放 / 'inflow' / 'closed'）、speed = 噴流の速さ [m/s]
+ * 戻り値: q [m³/s]（正 = 流入）、mode、speed = 噴流の速さ [m/s]。mode は
+ *   'inflow' = どこかの点で外の水頭が艦内より高い（粒子を生成する）
+ *   'free'   = 開放。海面より上の開口、または艦内の水頭（水 + 空気）が外より OUT_MARGIN を超えて高い（艦内の水が出ていく）
+ *   'closed' = 釣り合いの近く、または満水の部屋の海面下の開口
+ * 開放の開口では、GPU 流体は外を空気として扱い、水は自重で流れ出る（外の水圧を知らない）。止めるのはこの判定: 艦内の水頭が
+ * 外 + OUT_MARGIN まで下がれば閉じた扱いに戻る。流入を優先するのは、同じ開口で入る水と出る水が同時にあるとき生成を止めないため
  */
 export function openingFlow(opening, ctx, g = 9.81) {
   const pts = opening.samples;
   const a = opening.area / pts.length;
   const air = ctx.airHead ?? 0;
-  let q = 0, submerged = 0, headSum = 0, inflowPts = 0;
+  // 満水の部屋は水面が決まらない（水位 +∞）。艦内の水頭を無限大とみなして海面下の開口を開放すると、流れ出ては流れ込むのを繰り返す
+  const full = ctx.level === Infinity;
+  let q = 0, submerged = 0, headSum = 0, inflowPts = 0, outflow = false;
   for (const p of pts) {
     const w = ctx.toWorld(p);
     const hOut = Math.max(0, ctx.sea(w[0], w[2]) - w[1]);
-    if (hOut <= 0) continue; // 船外が空気（海面より上）: 水は入らない（空気の出入りは air.js）
+    const water = Math.max(0, ctx.level - (ctx.up[0] * p[0] + ctx.up[1] * p[1] + ctx.up[2] * p[2])); // 点の上の艦内の水の深さ
+    if (hOut <= 0) { // 船外が空気（海面より上）: 水は入らない（空気の出入りは air.js）。艦内の水が届いていればこぼれ出る
+      if (water > OUT_MARGIN) outflow = true;
+      continue;
+    }
     submerged++;
     // 船内側の圧力 = 空気の圧力 + 水面より下なら水の重さ
-    const dh = hOut - (Math.max(0, ctx.level - (ctx.up[0] * p[0] + ctx.up[1] * p[1] + ctx.up[2] * p[2])) + air);
-    if (dh > 0) { q += CD * a * Math.sqrt(2 * g * dh); headSum += dh; inflowPts++; }
+    const dh = hOut - (water + air);
+    if (dh > 0) { q += CD * a * Math.sqrt(2 * g * dh); headSum += dh; inflowPts++; } else if (-dh > OUT_MARGIN && !full) outflow = true;
   }
-  if (submerged === 0) return { q: 0, mode: 'free', speed: 0 };
+  if (q <= 0 && (submerged === 0 || outflow)) return { q: 0, mode: 'free', speed: 0 };
   if (q <= 0) return { q: 0, mode: 'closed', speed: 0 };
   // 噴流の速さは縮流部の流速 Cv·√(2gΔh)（Cv ≈ 0.98）。平均の水頭で代表させる
   return { q, mode: 'inflow', speed: 0.98 * Math.sqrt((2 * g * headSum) / inflowPts) };
