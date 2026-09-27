@@ -137,7 +137,8 @@ export function createOcean(scene, { sunDir }) {
     return mix(vec3(0.004, 0.025, 0.05), vec3(0.05, 0.32, 0.4), secK);
   })();
   secMat.opacityNode = mix(float(0.97), float(0.6), secK);
-  const BOT = -26, TOPY = 8;
+  // 船体座標の上下の範囲。全長 130 m の艦が 30° 傾けば端は ±30 m 上下し、水深 60 m に着底すれば海面は 60 m 上になる
+  const BOT = -50, TOPY = 70;
   const section = new THREE.Group(); // 船体座標。局所 x を切る向き（cutDir）に合わせて毎フレーム回す
   const face = (geo) => { const m = new THREE.Mesh(geo, secMat); m.renderOrder = 3; m.frustumCulled = false; section.add(m); };
   face(new THREE.PlaneGeometry(2 * CUT_BOX.z, TOPY - BOT).rotateY(Math.PI / 2).translate(0, (TOPY + BOT) / 2, 0)); // 中心面

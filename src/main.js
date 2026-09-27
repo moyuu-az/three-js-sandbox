@@ -26,7 +26,8 @@ import { flyDelta, MOVE_KEYS } from './cameraKeys.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
 // 画質: 格子間隔 h と粒子の上限。剛性と安定な時間刻みは h から fluidParams（gpu/fluid.js、圧縮率の SSOT）で決まる
-// 全長 130 m の艦を実寸で解くので、前の 30 m の船（h = 0.3 m）より粗い。艦内の容積 ~5,200 m³ の 9 割が入る粒子数を上限にする
+// 全長 130 m の艦を実寸で解くので、前の 30 m の船（h = 0.3 m）より粗い。粒子の上限は艦内の容積 ~5,200 m³ の 9 割以上が入る数
+// （満水に要る粒子数に対して 軽量 1.22 倍 / 標準 1.18 倍 / 高精細 0.94 倍）
 const QUALITY = {
   light: { h: 0.6, max: 229376, subCap: 4 },
   standard: { h: 0.5, max: 393216, subCap: 5 },
