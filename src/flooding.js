@@ -54,7 +54,7 @@ export function waterLevel(nodes, h, volume, up, scratch = new Float32Array(node
  * ctx.airHead（部屋の空気のゲージ圧を水頭 [m] にしたもの。閉じ込められた空気が縮むと正になり流入を押し返す。省略時 0）
  * 戻り値: q [m³/s]（正 = 流入、負 = 流出）、mode、speed = 噴流の速さ [m/s]。mode は
  *   'inflow'  = どこかの点で外の水頭が艦内より高い（粒子を生成する）。同じ開口で出る点があっても流入を優先する（生成を止めない）
- *   'outflow' = 艦内の水頭（水 + 空気）が外より OUT_MARGIN を超えて高い点がある。その点の水頭差でオリフィス式の量と速さを出し、
+ *   'outflow' = 艦内の水が届いていて、艦内の水頭（水 + 空気）が外より OUT_MARGIN を超えて高い点がある。その点の水頭差でオリフィス式の量と速さを出し、
  *               GPU 流体は開口の水に外向きの速さを与えて外側で消す（自重で落とすだけだと速さが艦内の水深で決まり、
  *               波の谷で速く出て山で遅く入るので、水位が平均の海面より低めに釣り合う）
  *   'free'    = 開放。水の届いていない海面より上の開口（空気だけ）、または満水の部屋で海面より上に出た点（水頭が決まらないので
@@ -81,7 +81,9 @@ export function openingFlow(opening, ctx, g = 9.81) {
       continue;
     }
     submerged++;
-    if (dh > 0) { q += CD * a * Math.sqrt(2 * g * dh); headSum += dh; inflowPts++; } else if (-dh > OUT_MARGIN && !full) out(-dh);
+    // 流出は水のある点だけ（海面より上の点と同じ）。艦内の水面より上の点で空気が外の水圧より高いのは泡で抜ける空気（air.js）で、
+    // 数えると水の出る速さを空気の水頭差で大きく見積もる
+    if (dh > 0) { q += CD * a * Math.sqrt(2 * g * dh); headSum += dh; inflowPts++; } else if (water > 0 && -dh > OUT_MARGIN && !full) out(-dh);
   }
   // 噴流の速さは縮流部の流速 Cv·√(2gΔh)（Cv ≈ 0.98）。平均の水頭で代表させる
   if (q > 0) return { q, mode: 'inflow', speed: 0.98 * Math.sqrt((2 * g * headSum) / inflowPts) };

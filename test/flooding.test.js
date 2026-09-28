@@ -83,6 +83,20 @@ test('流出: 閉じ込められた空気の圧力が外の水圧を超えてい
   assert.equal(F.openingFlow(hole(-2), ctx({ level: -1.5, airHead: 2 })).mode, 'outflow');
 });
 
+// 再現: 海面下の点でも、艦内の水面より上（空気の中）の点を流出に数えていた。空気の水頭と外の浅い水圧の差は水の流れではなく
+// 泡で抜ける空気（air.js）なのに、流出の速さの平均に入り、水の出る速さを大きく見積もった
+test('流出: 海面下でも艦内の水面より上（空気の中）の点は流出に数えない。速さは水のある点の水頭差だけで決まる', () => {
+  // 水面 −2.5、空気 3 m 水頭。水の中の点（y = −3）: 艦内 0.5 + 3 = 3.5 m、外 3 m → 差 0.5 m。
+  // 空気の中の点（y = −2, −1）: 艦内 3 m、外 2 m・1 m → 差 1 m・2 m（泡で抜ける空気。水は無い）
+  const o = { area: 3, samples: [[0, -3, 0], [0, -2, 0], [0, -1, 0]] };
+  const r = F.openingFlow(o, ctx({ level: -2.5, airHead: 3 }));
+  assert.equal(r.mode, 'outflow');
+  assert.ok(Math.abs(r.speed - 0.98 * Math.sqrt(2 * 9.81 * 0.5)) < 1e-9, `速さ ${r.speed}`);
+  assert.ok(Math.abs(r.q + F.CD * 1 * Math.sqrt(2 * 9.81 * 0.5)) < 1e-9, `量 ${r.q}（水のある 1 点分）`);
+  // 開口全体が空気の中なら、空気の圧力が外より高くても水の流出ではない（閉じた扱い。空気は air.js で抜ける）
+  assert.equal(F.openingFlow(hole(-2), ctx({ level: -2.5, airHead: 3 })).mode, 'closed');
+});
+
 test('流出: 釣り合いの近く（差が OUT_MARGIN 以内）は閉じた扱いのまま（開放と閉鎖を行き来しない）', () => {
   assert.equal(F.openingFlow(hole(-2), ctx({ level: 0 })).mode, 'closed');
   assert.equal(F.openingFlow(hole(-2), ctx({ level: F.OUT_MARGIN - 0.05 })).mode, 'closed');
