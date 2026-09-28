@@ -19,7 +19,7 @@ import { buildShipModel } from './render/shipModel.js';
 import { createOcean } from './render/ocean.js';
 import { createFluidRenderer } from './render/fluidRender.js';
 import { createFx, createTorpedo, P } from './render/fx.js';
-import { createProfile } from './ui/profile.js';
+import { createProfile, WL_Z } from './ui/profile.js';
 import { createChart } from './ui/chart.js';
 import { nextFrameAt } from './frameCap.js';
 import { flyDelta, MOVE_KEYS } from './cameraKeys.js';
@@ -678,12 +678,10 @@ async function main() {
     q.copy(model.group.quaternion);
     const e = new THREE.Matrix4().makeRotationFromQuaternion(q).elements; // 列優先
     const wlY = (z) => { const w = sim.toWorld([0, 0, z]); return (sim.sea(w[0], w[2]) - model.group.position.y - e[9] * z) / e[5]; };
-    const hot = flows.map(() => false);
     const hotRooms = new Array(Lo.ROOMS.length).fill(false);
     built.openings.forEach((o, k) => { if (flows[k]?.mode === 'inflow') hotRooms[o.room] = true; });
-    void hot;
     profile.update({
-      fills, hot: hotRooms, waterline: [wlY(H.Z_MIN - 0.8), wlY(H.Z_MAX + 0.8)], pressures: gauge.map((g) => g / 1e5),
+      fills, hot: hotRooms, waterline: WL_Z.map(wlY), pressures: gauge.map((g) => g / 1e5),
       doorStates: { ...gridState.doors, ...gridState.seaOpenings }, breaches: gridState.breaches,
     });
   }

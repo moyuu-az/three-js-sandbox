@@ -62,7 +62,10 @@ export const ROOMS = [
 // 扉とハッチ（艦内の仕切りの開口）。wt = 水密（開閉できる。既定は閉 = 戦闘配置）。box はこの範囲の壁・甲板を抜く。
 // 流体格子（h = 0.5 m）で 3 格子点の幅になるよう、実物（幅 0.6〜0.7 m）より大きい。2 点（幅 1.1 m）だと粒子が壁から離れる分で
 // 通り道が細り、扉の両側の水位がそろうのに 25 秒でも足りない（dev/fluid-selftest の「扉」「空気圧」）
-const wtDoor = (id, name, z, y0, x = 0) => ({ id, name, wt: true, open: false, box: { x: [x - 0.8, x + 0.8], y: [y0, y0 + 1.9], z: [z - 0.3, z + 0.3] } });
+// 敷居 SILL: 水密扉の下端は床より高い（実艦で 0.3〜0.4 m）。床の高さから抜くと、扉の範囲に入った床（下甲板）の格子点まで抜ける。
+// 床の格子点は板の面から最大で半格子（h = 0.6 で 0.3 m）上に来るので、それより高くする
+const SILL = 0.35;
+const wtDoor = (id, name, z, y0, x = 0) => ({ id, name, wt: true, open: false, box: { x: [x - 0.8, x + 0.8], y: [y0 + SILL, y0 + SILL + 1.9], z: [z - 0.3, z + 0.3] } });
 const yAround = (y) => (typeof y === 'number' ? [y - 0.4, y + 0.4] : [`${y}-0.4`, `${y}+0.4`]);
 const hatch = (id, name, y, z, x, wt = false) => ({ id, name, ...(wt ? { wt, open: false } : {}), box: { x: [x - 0.6, x + 0.6], y: yAround(y), z: [z - 0.6, z + 0.6] } });
 export const DOORS = [
@@ -80,7 +83,8 @@ export const DOORS = [
   hatch('h4', '補機室 昇降口', LOWER, -26, 1.6),
   hatch('h5', '後部弾薬庫 揚弾口', LOWER, -43, 0),
   hatch('h6', '後部倉庫 昇降口', LOWER, -52, -1.6),
-  { id: 'c1', name: '船首楼 仕切り扉', box: { x: [-0.55, 0.55], y: ['upper', 'upper+1.9'], z: [K3 - 0.3, K3 + 0.3] } },
+  // 下端は上甲板の板の格子点より上（格子点は板の面から最大で半格子 0.3 m 上に来る）。'upper' ちょうどからだと上甲板の格子点を抜く
+  { id: 'c1', name: '船首楼 仕切り扉', box: { x: [-0.55, 0.55], y: ['upper+0.35', 'upper+2.2'], z: [K3 - 0.3, K3 + 0.3] } },
 ];
 
 // 構造の板（1 格子点の厚さで固体になる）。axis の座標 at、span の範囲。y の at に 'upper' を使うと上甲板（舷弧に沿う）

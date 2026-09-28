@@ -111,6 +111,25 @@ test('格子: 水密扉・水密ハッチは開けると名前の 2 室の区画
   }
 });
 
+test('格子: 隔壁の扉（水密扉・船首楼の仕切り扉）を開けても、床の板（下甲板・上甲板）の格子点は抜けない（敷居）', () => {
+  // 以前は扉の範囲が床の高さちょうどから始まり、格子点の並び方によって扉の下の床の格子点まで抜けていた
+  const walls = Lo.DOORS.filter((d) => d.box.z[1] - d.box.z[0] < 1); // 隔壁（z の板）の扉。ハッチは除く
+  for (const hh of [0.42, 0.5, 0.6]) {
+    const closed = buildShipGrid(hh, allClosed).grid;
+    const open = buildShipGrid(hh, { ...allClosed, doors: Object.fromEntries(Object.keys(allClosed.doors).map((k) => [k, true])) }).grid;
+    const layer = (y) => Math.round((y - closed.origin[1]) / hh - 0.5);
+    for (let n = 0; n < closed.N; n++) {
+      if (closed.type[n] === open.type[n] || closed.type[n] !== V.NODE_SOLID) continue;
+      const [x, y, z] = closed.pos(...closed.coords(n));
+      const d = walls.find((w) => Lo.inBox(w.box, x, y, z));
+      if (!d) continue; // ハッチ
+      const [, j] = closed.coords(n);
+      const floor = Lo.PLATES.find((q) => q.axis === 'y' && Lo.inBox({ x: [-99, 99], y: [Lo.resolveY(q.at, z) - hh, Lo.resolveY(q.at, z) + hh], z: q.span.z }, x, y, z));
+      assert.ok(!floor || j !== layer(Lo.resolveY(floor.at, z)), `h=${hh} ${d.id} が床の格子点 (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}) を抜いた`);
+    }
+  }
+});
+
 test('格子: 水密扉・水密ハッチを開けると隣の区画とつながる', () => {
   const open = (id) => buildShipGrid(h, { ...allClosed, doors: { ...allClosed.doors, [id]: true } }).grid;
   let g = open('D3');

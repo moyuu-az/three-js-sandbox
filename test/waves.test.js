@@ -45,6 +45,28 @@ test('波: 粗い格子の補間は直接計算に近い', () => {
   assert.ok(e < 0.08, `誤差 ${e}`);
 });
 
+test('波: 艦の向きに沿った細長い格子（長さ × 幅）でも、斜めの向きで艦の上の点を直接計算に近く補間する', () => {
+  // 全長 130 m の艦を正方形の格子で覆うと点が多く（1 回 ~11 ms）、剛体の 1 ステップごとの計算が重かった
+  const ws = W.makeWaves(0.25, 4.0); // 穏やか: 最短の波長 ~4.9 m
+  const dir = [Math.sin(0.7), Math.cos(0.7)]; // 艦首の向き（x, z）
+  const g = W.createHeightGrid(150, 2.2, 32);
+  g.update(ws, 10, -5, 2, dir);
+  let e = 0;
+  for (let i = 0; i < 400; i++) {
+    const u = ((i * 7.31) % 140) - 70, v = ((i * 3.17) % 28) - 14; // 艦の前後 ±70 m・左右 ±14 m
+    const x = 10 + u * dir[0] + v * dir[1], z = -5 + u * dir[1] - v * dir[0];
+    e = Math.max(e, Math.abs(g.sample(x, z) - W.heightAt(ws, x, z, 2)));
+  }
+  assert.ok(e < 0.03, `誤差 ${e}（有義波高 0.25 m）`);
+  assert.ok(g.points < 0.45 * W.createHeightGrid(150, 3).points, `点の数 ${g.points}（艦を覆う正方形・3 m 間隔の 45% 未満）`);
+});
+
+test('波: 格子の間隔は最短の波長の半分より細かい（粗いと短い波がエイリアスして、うねりのように見える）', () => {
+  const ws = W.makeWaves(0.25, 4.0);
+  const shortest = Math.min(...ws.map((w) => (2 * Math.PI) / w.k));
+  assert.ok(W.HEIGHT_STEP < shortest / 2, `${W.HEIGHT_STEP} / ${shortest}`);
+});
+
 test('波: 軌道速度は深さとともに減る', () => {
   const ws = W.makeWaves(2.2, 7.5);
   const sp = (d) => { let m = 0; for (let t = 0; t < 20; t += 0.1) { const v = W.orbitalVelocity(ws, 0, 0, t, d); m = Math.max(m, Math.hypot(...v)); } return m; };

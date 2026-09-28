@@ -7,6 +7,7 @@ export const L = 129.5; // 全長（甲板位置）
 export const B = 11.2; // 最大幅
 export const D = 7.02; // 深さ（船体中央の上甲板まで）
 export const Z_MIN = -L / 2, Z_MAX = L / 2;
+export const DESIGN_DRAFT = 4.14; // 設計喫水 [m]（船体中央のキールから）。島風の公試状態（燃料 2/3）
 export const TANK_TOP = 1.0; // 二重底の天板。これより下は燃料・水のタンク（浸水しない前提）
 // 船首楼: 船首からここまで上甲板の上にもう 1 層（船首楼甲板）がある。後ろ端は切り立った壁（船首楼の後端壁）
 export const FC_Z = 21.0;

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSim, SEABED_Y, DESIGN_DRAFT, SHIP_MASS, ENVELOPE_VOLUME, RHO, SHIP_COM, GM } from '../src/sim.js';
+import { createSim, SEABED_Y, DESIGN_DRAFT, SHIP_MASS, ENVELOPE_VOLUME, RHO, SHIP_COM, GM, CELL } from '../src/sim.js';
 import * as MP from '../src/massprops.js';
 import * as W from '../src/waves.js';
 import * as Lo from '../src/layout.js';
@@ -52,12 +52,14 @@ test('艦型: 外殻の体積は予備浮力を持ち、設計喫水の排水量
 });
 
 test('艦型: 重心の高さ KG = KM − GM（駆逐艦の典型 4〜5 m）、前後は浮心の位置', () => {
-  const cells = H.buildCells(0.25);
-  const d = H.displacement(cells, 0.25, DESIGN_DRAFT);
+  // 浮力セル（sim と同じ大きさ）で求めた KM から。細かいセルとの差（~0.07 m）を許容に入れると、船型を変えたときに誤って通る
+  const d = H.displacement(H.buildCells(CELL), CELL, DESIGN_DRAFT);
   const km = d.kb + H.waterplaneInertia(DESIGN_DRAFT) / d.v;
-  assert.ok(Math.abs(SHIP_COM[1] - (km - GM)) < 0.08, `KG ${SHIP_COM[1]} vs KM − GM ${km - GM}`);
+  assert.ok(Math.abs(SHIP_COM[1] - (km - GM)) < 1e-9, `KG ${SHIP_COM[1]} vs KM − GM ${km - GM}`);
+  const fine = H.displacement(H.buildCells(0.25), 0.25, DESIGN_DRAFT);
+  assert.ok(Math.abs(d.kb - fine.kb) < 0.1, `KB はセルの大きさで 0.1 m 以上変わらない: ${d.kb} / ${fine.kb}`);
   assert.ok(SHIP_COM[1] > 4 && SHIP_COM[1] < 5, `KG ${SHIP_COM[1]}`);
-  assert.ok(Math.abs(SHIP_COM[2] - d.lcb) < 0.3, `LCG ${SHIP_COM[2]} LCB ${d.lcb}`);
+  assert.ok(Math.abs(SHIP_COM[2] - d.lcb) < 1e-9, `LCG ${SHIP_COM[2]} LCB ${d.lcb}`);
 });
 
 test('水線面の二次モーメント: 水線面を 2 次元に刻んだ ∬ x² dA と一致し、同じ長さ・幅の箱 l b³ / 12 より小さい', () => {
@@ -96,6 +98,16 @@ test('静水: 無傷なら設計喫水で水平に浮き続ける', async () => 
   const s = sim.state();
   assert.ok(Math.abs(s.draft - DESIGN_DRAFT) < 0.05, `喫水 ${s.draft}`);
   assert.ok(Math.abs(s.pitchDeg) < 0.3 && Math.abs(s.rollDeg) < 0.3, `${s.pitchDeg} ${s.rollDeg}`);
+});
+
+test('静水: 斜め（60°）を向いた艦も設計喫水で水平に浮く（海面の格子は艦の向きに沿う）', async () => {
+  const sim = await createSim({ waves: W.makeWaves(0.25, 4.0) });
+  const a = (60 * Math.PI) / 180;
+  sim.body.setRotation({ x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) }, true);
+  run(sim, 20);
+  const s = sim.state();
+  assert.ok(Math.abs(s.draft - DESIGN_DRAFT) < 0.15, `喫水 ${s.draft}`);
+  assert.ok(Math.abs(s.pitchDeg) < 0.5 && Math.abs(s.rollDeg) < 0.5, `${s.pitchDeg} ${s.rollDeg}`);
 });
 
 test('復原性: 横に傾けても元に戻る（GM が正）', async () => {
