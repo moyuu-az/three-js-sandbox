@@ -281,11 +281,16 @@ export function buildShipModel({ h, draft }) {
   }
   // ハッチ: コーミング（縁の立ち上がり）と、前の辺を軸に後ろの辺が持ち上がる蓋（軸は +x 回りなので開く角度は正。負だと蓋が穴の中へ垂れ下がる）
   // 甲板の穴のまわりの補強板（ダブラ）。甲板は格子状の四角で張り、穴は四角の中心で抜くので、穴の縁がギザギザになり
-  // コーミングの外に最大で四角の半分（~0.24 m）のすき間が見える。それより広い板で覆う
+  // コーミングの外に最大で四角の半分（~0.24 m）のすき間が見える。それより広い板で覆う。
+  // yOf(z) は甲板の上面の高さ。露天甲板は舷弧で前後に傾く（船首楼の昇降口 o1 で ~5 cm/m）ので、帯ごとにその位置の高さと傾きに
+  // 載せる（開口の中心の高さで平らに置くと、前の帯が甲板に埋もれ、内縁では甲板と 1 mm 差で z-fighting になる）
   const DOUBLER = 0.3;
-  function doubler(x, y, z, a, b, material) {
+  function doubler(x, z, a, b, material, yOf) {
     const w = DOUBLER, t = 0.03;
-    for (const [sx, sz, cx, cz] of [[2 * (a + w), w, x, z - b - w / 2], [2 * (a + w), w, x, z + b + w / 2], [w, 2 * b, x - a - w / 2, z], [w, 2 * b, x + a + w / 2, z]]) B.add(material, box(sx, t, sz, cx, y + t / 2, cz));
+    for (const [sx, sz, cx, cz] of [[2 * (a + w), w, x, z - b - w / 2], [2 * (a + w), w, x, z + b + w / 2], [w, 2 * b, x - a - w / 2, z], [w, 2 * b, x + a + w / 2, z]]) {
+      const slope = (yOf(cz + 0.05) - yOf(cz - 0.05)) / 0.1;
+      B.add(material, box(sx, t, sz, cx, yOf(cz) + t / 2, cz, [-Math.atan(slope), 0, 0]));
+    }
   }
   function hatchLid(id, x, y, z, a, b, open, coaming = 0.45, material = M.gray) {
     for (const [w, d, cx, cz] of [[2 * a + 0.1, 0.05, x, z - b - 0.025], [2 * a + 0.1, 0.05, x, z + b + 0.025], [0.05, 2 * b, x - a - 0.025, z], [0.05, 2 * b, x + a + 0.025, z]]) B.add(material, box(w, coaming, d, cx, y + coaming / 2, cz));
@@ -303,7 +308,7 @@ export function buildShipModel({ h, draft }) {
     const y0 = Lo.resolveY(d.box.y[0], zc), y1 = Lo.resolveY(d.box.y[1], zc);
     if (d.box.z[1] - d.box.z[0] > 1) { // 水平のハッチ（上甲板の水密ハッチ）
       const y = snapY((y0 + y1) / 2) + T_DECK / 2;
-      doubler(xc, y, zc, (d.box.x[1] - d.box.x[0]) / 2 + 0.05, (d.box.z[1] - d.box.z[0]) / 2 + 0.05, M.steel);
+      doubler(xc, zc, (d.box.x[1] - d.box.x[0]) / 2 + 0.05, (d.box.z[1] - d.box.z[0]) / 2 + 0.05, M.steel, () => y);
       hatchLid(d.id, xc, y, zc, (d.box.x[1] - d.box.x[0]) / 2, (d.box.z[1] - d.box.z[0]) / 2, d.open, 0.3, M.steel);
       continue;
     }
@@ -317,7 +322,7 @@ export function buildShipModel({ h, draft }) {
     const zc = (d.box.z[0] + d.box.z[1]) / 2, xc = (d.box.x[0] + d.box.x[1]) / 2, y = lower + T_DECK / 2;
     const a = (d.box.x[1] - d.box.x[0]) / 2, b = (d.box.z[1] - d.box.z[0]) / 2;
     for (const [w, dd, cx, cz] of [[2 * a, 0.05, xc, zc - b], [2 * a, 0.05, xc, zc + b], [0.05, 2 * b, xc - a, zc], [0.05, 2 * b, xc + a, zc]]) B.add(M.yellow, box(w, 0.9, dd, cx, y + 0.45, cz));
-    doubler(xc, y, zc, a, b, M.primer);
+    doubler(xc, zc, a, b, M.primer, () => y);
     for (const s of [-0.3, 0.3]) B.add(M.steel, rod(V3(xc + s, H.TANK_TOP, zc - b + 0.15), V3(xc + s, y + 0.9, zc - b + 0.15), 0.025));
     for (let yy = H.TANK_TOP + 0.3; yy < y; yy += 0.3) B.add(M.steel, rod(V3(xc - 0.3, yy, zc - b + 0.15), V3(xc + 0.3, yy, zc - b + 0.15), 0.015));
   }
@@ -331,11 +336,11 @@ export function buildShipModel({ h, draft }) {
       const hgt = 2.4;
       for (const [w, d, x, z] of [[2 * a + 0.2, 0.1, cx, cz - b - 0.05], [2 * a + 0.2, 0.1, cx, cz + b + 0.05], [0.1, 2 * b, cx - a - 0.05, cz], [0.1, 2 * b, cx + a + 0.05, cz]]) B.add(M.gray, box(w, hgt, d, x, cy + hgt / 2, z));
       for (let y = cy + 0.5; y < cy + hgt - 0.3; y += 0.3) B.add(M.dark, box(0.02, 0.06, 2 * b, cx + Math.sign(cx) * (a + 0.11), y, cz)); // 外側のルーバー
-      doubler(cx, cy, cz, a + 0.1, b + 0.1, M.gray);
+      doubler(cx, cz, a + 0.1, b + 0.1, M.gray, dkY);
       hatchLid(o.id, cx, cy + hgt - 0.1, cz, a, b, o.open, 0.1, M.gray);
       continue;
     }
-    doubler(cx, cy, cz, a + 0.05, b + 0.05, M.gray);
+    doubler(cx, cz, a + 0.05, b + 0.05, M.gray, dkY);
     hatchLid(o.id, cx, cy, cz, a, b, o.open, o.half[1] > 1 ? 0.7 : 0.45, M.gray);
   }
 
