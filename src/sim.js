@@ -10,7 +10,7 @@ import * as MP from './massprops.js';
 export const RHO = 1025; // 海水の密度 [kg/m³]
 export const G = W.G;
 export const SEABED_Y = -60;
-export const DESIGN_DRAFT = 4.14; // 設計喫水 [m]（船体中央のキールから）。島風の公試状態（燃料 2/3）
+export const DESIGN_DRAFT = H.DESIGN_DRAFT; // 設計喫水 [m]（SSOT は hull.js。描画だけの開発ページも使う）
 export const CELL = 0.8; // 浮力セルの一辺 [m]（全長 130 m の船で ~1.3 万個）
 export const GM = 0.95; // 設計喫水での横メタセンタ高さ [m]（友鶴事件後の駆逐艦の復原性の目安、推定）
 export const DT = 1 / 60;
@@ -65,7 +65,9 @@ export async function createSim({ waves = [], seabedY = SEABED_Y } = {}) {
   }
 
   const cells = Float64Array.from(cells0.flatMap((c) => [c.x, c.y, c.z]));
-  const heights = W.createHeightGrid(H.L + 24, 3); // 船の周りの海面（船が横を向いても、斜めでも覆う大きさ）
+  // 船の周りの海面。船の向きに沿った長方形: 長さは全長 + 余裕、幅は横倒し（甲板の高さ ~11 m が横に来る）でも覆う ±16 m
+  const heights = W.createHeightGrid(H.L + 20, W.HEIGHT_STEP, 32);
+  const fwd = [0, 1];
   const pos = new Vector3(), rot = new Quaternion(), lin = new Vector3(), ang = new Vector3(), com = new Vector3();
   const p = new Vector3(), r = new Vector3(), v = new Vector3(), f = new Vector3(), F = new Vector3(), T = new Vector3(), tmp = new Vector3();
   const invRot = new Quaternion();
@@ -75,7 +77,9 @@ export async function createSim({ waves = [], seabedY = SEABED_Y } = {}) {
   function step() {
     const tr = body.translation(), q = body.rotation(), lv = body.linvel(), av = body.angvel(), wc = body.worldCom();
     pos.set(tr.x, tr.y, tr.z); rot.set(q.x, q.y, q.z, q.w); lin.set(lv.x, lv.y, lv.z); ang.set(av.x, av.y, av.z); com.set(wc.x, wc.y, wc.z);
-    heights.update(waves, pos.x, pos.z, t);
+    // 艦首の向き（船体の +z をワールドの水平面へ）。格子を艦に沿わせる
+    fwd[0] = 2 * (q.x * q.z + q.y * q.w); fwd[1] = 1 - 2 * (q.x * q.x + q.y * q.y);
+    heights.update(waves, pos.x, pos.z, t, fwd);
     let vol = 0;
     const cv = CELL ** 3;
     // 回転行列（three の Quaternion → 成分）。セル 7 千個の内側では Vector3 のメソッドを使わない

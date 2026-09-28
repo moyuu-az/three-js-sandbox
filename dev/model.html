@@ -22,15 +22,16 @@ import { createStage } from '../src/render/stage.js';
 import { buildShipModel } from '../src/render/shipModel.js';
 import { createOcean } from '../src/render/ocean.js';
 import * as W from '../src/waves.js';
+import * as H from '../src/hull.js';
 const q = new URLSearchParams(location.search);
 const log = (m) => { document.getElementById('s').textContent += m + '\n'; };
 try {
   const stage = await createStage(document.getElementById('app'), { seabedY: -60, allowWebGL: true });
   log('backend: ' + (stage.renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL'));
   const t0 = performance.now();
-  const model = buildShipModel({ h: 0.5, draft: 4.14 });
+  const model = buildShipModel({ h: 0.5, draft: H.DESIGN_DRAFT });
   log('model ms ' + (performance.now() - t0).toFixed(0));
-  model.group.position.y = -4.14;
+  model.group.position.y = -H.DESIGN_DRAFT;
   stage.scene.add(model.group);
   const ocean = createOcean(stage.scene, { sunDir: stage.sunDir });
   ocean.setWaves(W.makeWaves(0.9, 5.5));

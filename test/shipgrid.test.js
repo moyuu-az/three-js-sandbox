@@ -112,6 +112,32 @@ test('格子: 水密扉・水密ハッチは開けると名前の 2 室の区画
   }
 });
 
+test('格子: 隔壁の扉（水密扉・船首楼の仕切り扉）を開けても、床の板（下甲板・上甲板）の格子点は抜けない（敷居）', () => {
+  // 以前は扉の範囲が床の高さちょうどから始まり、格子点の並び方によって扉の下の床の格子点まで抜けていた。
+  // 全部の扉を開けた格子で、扉の真下（扉の x・z の範囲）にある床の板の層の格子点が固体のままかを直接見る
+  // （閉じた格子との差で見ると、常に開いている船首楼の仕切り扉 c1 は差に出ず、確かめられない）
+  const walls = Lo.DOORS.filter((d) => d.box.z[1] - d.box.z[0] < 1); // 隔壁（z の板）の扉。ハッチは除く
+  const inSpan = (s, x, z) => (!s.x || (x >= s.x[0] && x <= s.x[1])) && (!s.z || (z >= s.z[0] && z <= s.z[1]));
+  for (const hh of [0.42, 0.5, 0.6]) {
+    const g = buildShipGrid(hh, { ...allClosed, doors: Object.fromEntries(Object.keys(allClosed.doors).map((k) => [k, true])) }).grid;
+    const layer = (y) => Math.round((y - g.origin[1]) / hh - 0.5); // shipgrid.js の板の層の決め方
+    const checked = new Set();
+    for (let n = 0; n < g.N; n++) {
+      const [i, j, k] = g.coords(n);
+      const [x, y, z] = g.pos(i, j, k);
+      // その扉の床 = 扉の真下で、扉の下端に近い（z = K3 には下甲板の D2 と、その上の上甲板の c1 が同じ列にある）
+      const d = walls.find((w) => x >= w.box.x[0] && x <= w.box.x[1] && z >= w.box.z[0] && z <= w.box.z[1] && Math.abs(Lo.resolveY(w.box.y[0], z) - y) < 1);
+      if (!d || !H.inside(x, y, z)) continue;
+      if (!Lo.PLATES.some((q) => q.axis === 'y' && inSpan(q.span, x, z) && j === layer(Lo.resolveY(q.at, z)))) continue;
+      checked.add(d.id);
+      assert.equal(g.type[n], V.NODE_SOLID, `h=${hh} ${d.id} が床の格子点 (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}) を抜いた`);
+    }
+    // 空振りしていない。D3 の床は二重底の天板（板ではなく y < TANK_TOP の固体）。D1 は前側（前部倉庫）に下甲板が無く、後ろ側の
+    // 下甲板は z = K2 までなので、格子間隔によっては扉の範囲に床の格子点が無い
+    for (const id of ['D2', 'D4', 'D5', 'D6', 'c1']) assert.ok(checked.has(id), `h=${hh} ${id} の床を確かめていない`);
+  }
+});
+
 test('格子: 水密扉・水密ハッチを開けると隣の区画とつながる', () => {
   const open = (id) => buildShipGrid(h, { ...allClosed, doors: { ...allClosed.doors, [id]: true } }).grid;
   let g = open('D3');

@@ -90,23 +90,38 @@ export function packWaves(waves) {
   return { a, b, count: Math.min(MAX_WAVES, waves.length) };
 }
 
-// 船の周りの海面高さを粗い格子で先に求め、浮力セルでは双線形補間する（セルごとに反復するより 50 倍速い）
-export function createHeightGrid(size = 48, step = 2) {
-  const n = Math.ceil(size / step) + 1;
-  const hts = new Float32Array(n * n);
-  let ox = 0, oz = 0;
+// 海面高さの格子の間隔 [m]。最短の波（穏やか: 波長 ~4.9 m）の半分より細かくする（粗いと短い波がエイリアスして長いうねりに化ける）
+export const HEIGHT_STEP = 2.2;
+
+// 船の周りの海面高さを粗い格子で先に求め、浮力セルでは双線形補間する（セルごとに反復するより 50 倍速い）。
+// 格子は船の向き dir（水平の単位ベクトル [x, z]）に沿った長さ length × 幅 width の長方形。全長 130 m の艦を正方形で覆うと
+// 点が 3 倍以上になり、剛体の 1 ステップ（60 Hz）ごとの更新が ~11 ms かかった。格子の外の点は端の値で近似する
+export function createHeightGrid(length = 48, step = HEIGHT_STEP, width = length) {
+  const nu = Math.ceil(length / step) + 1, nv = Math.ceil(width / step) + 1;
+  const hts = new Float32Array(nu * nv);
+  let cx = 0, cz = 0, dx = 0, dz = 1;
   const grid = {
     max: 0, // 格子内の最高の海面（これより上のセルは計算を省ける）
-    update(waves, cx, cz, t) {
-      ox = cx - size / 2; oz = cz - size / 2;
+    points: nu * nv,
+    update(waves, x0, z0, t, dir = [0, 1]) {
+      const l = Math.hypot(dir[0], dir[1]);
+      if (l > 1e-6) { dx = dir[0] / l; dz = dir[1] / l; } // 真上・真下を向いた船（向きが決まらない）は前の向きのまま
+      cx = x0; cz = z0;
       let m = -Infinity;
-      for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const v = heightAt(waves, ox + i * step, oz + j * step, t, 3); hts[i + n * j] = v; if (v > m) m = v; }
+      for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) {
+        const u = i * step - length / 2, v = j * step - width / 2;
+        const h = heightAt(waves, cx + u * dx + v * dz, cz + u * dz - v * dx, t, 3);
+        hts[i + nu * j] = h;
+        if (h > m) m = h;
+      }
       grid.max = m;
     },
     sample(x, z) {
-      const fx = Math.min(n - 1.001, Math.max(0, (x - ox) / step)), fz = Math.min(n - 1.001, Math.max(0, (z - oz) / step));
-      const i = Math.floor(fx), j = Math.floor(fz), a = fx - i, b = fz - j;
-      const h00 = hts[i + n * j], h10 = hts[i + 1 + n * j], h01 = hts[i + n * (j + 1)], h11 = hts[i + 1 + n * (j + 1)];
+      const ex = x - cx, ez = z - cz;
+      const fu = Math.min(nu - 1.001, Math.max(0, (ex * dx + ez * dz + length / 2) / step));
+      const fv = Math.min(nv - 1.001, Math.max(0, (ex * dz - ez * dx + width / 2) / step));
+      const i = Math.floor(fu), j = Math.floor(fv), a = fu - i, b = fv - j;
+      const h00 = hts[i + nu * j], h10 = hts[i + 1 + nu * j], h01 = hts[i + nu * (j + 1)], h11 = hts[i + 1 + nu * (j + 1)];
       return (h00 * (1 - a) + h10 * a) * (1 - b) + (h01 * (1 - a) + h11 * a) * b;
     },
   };
