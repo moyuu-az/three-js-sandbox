@@ -200,8 +200,12 @@ async function main() {
   const salvo = [], SALVO_GAP = 2.5;
   let salvoAt = 0;
   const breachSize = () => [+$('breachW').value, +$('breachH').value];
+  // 開口の上限で撃てない・入りきらないとき。続きの魚雷（salvo）も同じ理由で入らないので止める（残すと 1 フレームごとに断って通知が並ぶ）
+  const refuseFull = () => { salvo.length = 0; toast(`破口が多すぎて、これ以上は計算できません（開口の上限 ${MAX_OPENINGS}）`, 'warn'); };
   function launch(local, side, [w, hh] = breachSize()) {
-    if (run) return;
+    if (run) { toast('魚雷が航走中です。命中してから撃ってください', 'warn'); return; }
+    // 開口は格子に MAX_OPENINGS 個まで。埋まっていれば撃たない（命中しても破口を格子に入れられない）
+    if (built.openings.length >= MAX_OPENINGS) { refuseFull(); return; }
     const y = Math.min(Math.max(local[1], H.TANK_TOP + 0.4), H.deckY(local[2]) - 0.4);
     const z = Math.max(H.Z_MIN + 1.5, Math.min(H.Z_MAX - 2.5, local[2]));
     if (H.halfBreadth(z, y) <= 0.3) { toast('そこは狙えません（船体の端）', 'warn'); return; }
@@ -229,8 +233,16 @@ async function main() {
     const { b, w, hh } = run;
     run = null;
     salvoAt = simTime + SALVO_GAP;
+    const droppedBefore = built.dropped;
     gridState.breaches.push(b);
     rebuild();
+    if (built.dropped > droppedBefore) {
+      // 破口が部屋をまたいで片に分かれ、上限に入りきらなかった: 黙って一部だけ開けず、取り消して知らせる（rupture と同じ扱い）
+      gridState.breaches.pop();
+      rebuild();
+      refuseFull();
+      return;
+    }
     model.addBreachDecal(b.center, b.normal, w, hh);
     const out = new THREE.Vector3(...b.normal).applyQuaternion(model.group.quaternion);
     fx.explosion(tgt, out);
@@ -299,6 +311,7 @@ async function main() {
       return model.isGhost(hit, p) || p.y > peelY || (cutSide && p.x * cutSide > 0.01) ? null : p;
     }).find((p) => p);
     if (!local) return;
+    if (salvo.length) { toast('シナリオの魚雷を撃ち終えるまで待ってください', 'warn'); return; }
     launch([local.x, local.y, local.z], local.x >= 0 ? 1 : -1);
   });
 
@@ -358,7 +371,9 @@ async function main() {
     b.className = 'scenario';
     b.append(Object.assign(document.createElement('b'), { textContent: s.name }), Object.assign(document.createElement('span'), { textContent: s.note }));
     b.onclick = () => {
-      if (run || salvo.length) return; // 魚雷が走っている間は扉も変えない（launch と同じ条件）
+      // 魚雷が走っている間・続きの魚雷が残っている間は扉も変えない（launch と同じ条件）。黙って無視すると押せていないように見える
+      // 続きの魚雷を待つ間（run は null）は「航走中」ではなく、1 本命中しても次が撃たれるので、salvo を先に見る
+      if (run || salvo.length) { toast(salvo.length ? 'シナリオの魚雷を撃ち終えるまで待ってください' : '魚雷が航走中です。シナリオは命中してから始めてください', 'warn'); return; }
       const toClose = (s.close ?? []).filter((id) => isOpen(id));
       if (toClose.length) {
         // まとめて閉じる（1 枚ずつ setDoor すると格子の作り直しと通知が枚数分起きる）
@@ -372,7 +387,7 @@ async function main() {
       const [first, ...rest] = s.hits;
       $('breachW').value = first.size[0]; $('breachH').value = first.size[1]; syncRanges();
       fire(first);
-      salvo.push(...rest);
+      if (run) salvo.push(...rest); // 1 本目を断られた（開口の上限）なら続きも撃たない
     };
     return b;
   }));

@@ -195,6 +195,10 @@ export function ruptureAt(p, axis, size = 0.8, meta = {}) {
   const fcWall = p[1] > H.upperY(p[2]) + 0.05 && Math.abs(p[2] - H.FC_Z) < 1;
   const onHull = Math.abs(axis[1]) < 0.5 && !fcWall && H.inside(p[0] - axis[0] * 0.2, p[1], p[2] - axis[2] * 0.2);
   let n = onHull ? H.surfaceNormal(p[0], p[1], p[2]) : axis;
-  if (!(Math.abs(Math.hypot(...n) - 1) < 1e-3)) n = axis;
+  // 曲面の法線が格子の面を船外へ抜けない（直角・内向き）なら格子の向きを使う。船体の範囲の外（艦尾の丸い先端の z < Z_MIN）や
+  // 甲板の反りの段（±z の面の船外側が甲板の上）では、数値微分の片側が船体の外（半幅 −1）になって成分が捨てられ、真横を向いた穴になる。
+  // しきい値を 0 より上げない: 艦首・艦尾の絞りの舷側の ±z の段の面では、正しい曲面の法線（ほぼ ±x）でも格子の向きとの内積が
+  // 0.007 程度まで下がり、格子の向きに倒すと穴が外板から垂直に突き出る
+  if (!(Math.abs(Math.hypot(...n) - 1) < 1e-3) || !(dot(n, axis) > 0)) n = axis;
   return { center: [...p], normal: n, ...faceAxes(n), half: [size / 2, size / 2], ...meta };
 }
