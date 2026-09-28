@@ -285,11 +285,15 @@ if (window.ONLY1) { window.done = true; throw new Error('only1'); }
   fluid.setOpening(0, { mode: OPEN_OUTFLOW, inflow: vel, spawnVel: vel });
   await run(T);
   fluid.setOpening(0, { mode: OPEN_CLOSED });
-  await run(0.5);
+  await run(0.5); // 閉じる直前に開口を出かかっていた粒子が抜けきるまで
   const out = ((fluid.stats?.killed ?? 0) - k0) * Vp, expect = o.area * SPEED * T;
+  const kClosed = fluid.stats?.killed ?? 0;
+  await run(2);
+  const leakAfter = (fluid.stats?.killed ?? 0) - kClosed;
   const ps = await particles();
   check('流出: 外向きの速さ × 開口の面積 × 時間 に見合う水が出ていく（格子 0.5 m の解像度で 30〜120%）', out > expect * 0.3 && out < expect * 1.2, `出た水 ${out.toFixed(1)} m³ / 目安 ${expect.toFixed(1)} m³`);
-  check('流出: 閉じた後は出ていかず、粒子の数が合い、NaN も無い', !nan(ps) && ps.length + Math.round(out / Vp) === pts.length / 3, `残り ${ps.length} + 出た ${Math.round(out / Vp)} = ${pts.length / 3}`);
+  check('流出: 閉じた後は出ていかない（閉じてから 2 秒で消えた粒子 0）', leakAfter === 0, `${leakAfter} 個`);
+  check('流出: 粒子の数が合い（残り + 出た = 最初）、NaN も無い', !nan(ps) && ps.length + Math.round(out / Vp) === pts.length / 3, `残り ${ps.length} + 出た ${Math.round(out / Vp)} = ${pts.length / 3}`);
 }
 
 log(`\n所要 ${((performance.now() - t0) / 1000).toFixed(1)} s`);

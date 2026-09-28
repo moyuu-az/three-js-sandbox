@@ -148,12 +148,32 @@ test('流出: 満水の部屋でも、海面より上に出た開口の点から
   assert.deepEqual(r, { q: 0, mode: 'free', speed: 0 }, '無限大の水頭で流出の速さを作らない');
 });
 
-test('流出: 一部の点で流入していれば流入を優先する（波の谷にかかった点から出る水と、深い点から入る水が同時にあるときは入れる）', () => {
+// 以前は流入の点が 1 つでもあれば流入を優先した。流入の水頭差がごく小さいと開口全体の速さが ~0 になり（実質は壁）、
+// ほかの点からの流出まで止めた。GPU は開口ごとに 1 つの状態しか持てないので、量の大きい向きを選ぶ
+test('流出: 同じ開口に流入と流出の点があれば、量の大きい向きを選ぶ（波の谷と山にまたがる開口）', () => {
   const o = { area: 1, samples: [[0, -5, 0], [10, -2.9, 0]] };
   const sea = (x) => (x > 5 ? -2.5 : 0); // x = 10 の点は波の谷（海面 −2.5 m、深さ 0.4 m）
+  // 深い点: 外 5 m − 艦内 4 m = +1 m（流入）、谷の点: 外 0.4 m − 艦内 1.9 m = −1.5 m（流出）→ 流出が大きい
   const r = F.openingFlow(o, ctx({ level: -1, sea }));
-  assert.equal(r.mode, 'inflow');
-  assert.ok(r.q > 0);
+  assert.equal(r.mode, 'outflow');
+  assert.ok(Math.abs(r.q + F.CD * 0.5 * Math.sqrt(2 * 9.81 * 1.5)) < 1e-9, '流出の点の量だけ');
+  // 流入と流出が同時にあり、流入が大きい: 深い点は外 5 m − 艦内 3.5 m = +1.5 m（量 ∝ √1.5）、谷の点は外 0.4 m − 艦内 1.4 m = −1.0 m（∝ √1.0）
+  const r2 = F.openingFlow(o, ctx({ level: -1.5, sea }));
+  assert.equal(r2.mode, 'inflow', `${JSON.stringify(r2)}`);
+  assert.ok(Math.abs(r2.q - F.CD * 0.5 * Math.sqrt(2 * 9.81 * 1.5)) < 1e-9, '流入の点の量だけ');
+  // 深い点: 外 2 m − 艦内 1.99 m = +0.01 m、谷の点: 外 0.4 m − 艦内 2.89 m = −2.49 m
+  const r3 = F.openingFlow({ area: 1, samples: [[0, -2, 0], [10, -2.9, 0]] }, ctx({ level: -0.01, sea: (x) => (x > 5 ? -2.5 : 0) }));
+  assert.equal(r3.mode, 'outflow');
+});
+
+test('流出: 全部の点が海面より上で艦内の水が届いていても、釣り合いの近く（差が OUT_MARGIN 以内）なら閉じたまま（自重で落とさない）', () => {
+  // 水 0.1 m + 空気 −0.05 m = +0.05 m（外気との差 0.05 m）。以前は海面下の点が無いだけで開放になり、GPU が水を落とした
+  assert.equal(F.openingFlow(hole(0.5), ctx({ level: 0.6, airHead: -0.05 })).mode, 'closed');
+  // 負圧の空気が水を吊り上げている（水 0.4 m + 空気 −0.7 m）も閉じたまま
+  assert.equal(F.openingFlow(hole(0.5), ctx({ level: 0.9, airHead: -0.7 })).mode, 'closed');
+  // 水が届いていなければ従来どおり開放（空気だけ）、差が大きければ流出
+  assert.equal(F.openingFlow(hole(0.5), ctx({ level: 0.2 })).mode, 'free');
+  assert.equal(F.openingFlow(hole(0.5), ctx({ level: 1.5 })).mode, 'outflow');
 });
 
 test('粒子数: 流量 × 時間 ÷ 粒子の体積。端数は持ち越して合計が合う', () => {
