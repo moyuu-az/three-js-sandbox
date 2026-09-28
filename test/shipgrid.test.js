@@ -4,6 +4,7 @@ import * as V from '../src/voxel.js';
 import * as Lo from '../src/layout.js';
 import * as H from '../src/hull.js';
 import { buildShipGrid, breachAt, ruptureAt } from '../src/shipgrid.js';
+import * as A from '../src/air.js';
 
 const h = 0.5; // 標準画質の格子間隔
 const K = Lo.BULKHEADS;
@@ -266,6 +267,20 @@ test('破断: 上甲板の穴は上向きの面、u・v・法線は直交する�
   assert.equal(Lo.ROOMS[o[0].room].name, '士官室');
   assert.equal(o[0].name, '破裂（士官室）');
   assert.ok(Math.abs(o.reduce((s, x) => s + x.area, 0) - 0.64) < 1e-9, '面積 0.8 × 0.8');
+});
+
+test('破断: 外板のどの点の穴も、格子の面の船外向きと同じ側を向く（艦尾の丸い先端で真横を向かない）', () => {
+  // 再現: 船体の範囲の外（z < Z_MIN）で数値微分した法線は z 成分が捨てられて ±x になり、艦尾の先端の破断が横向きの穴になった
+  const { grid } = buildShipGrid(h);
+  const env = A.envelopePoints(grid, Lo.ROOMS.length, A.strengthOf([]));
+  let worst = 1, at = null;
+  for (let i = 0; i < env.room.length; i++) {
+    const pt = A.envelopePoint(env, i);
+    const b = ruptureAt(pt.p, pt.n, 0.8);
+    const d = dot3(b.normal, pt.n);
+    if (d < worst) { worst = d; at = pt; }
+  }
+  assert.ok(worst > 0.2, `最悪 ${worst.toFixed(2)} @ ${at?.p.map((v) => v.toFixed(2))} 格子 ${at?.n}`);
 });
 
 test('破断: 舷側の穴は船体の曲面の法線（外向き）を使い、格子の向き（±x）とほぼ同じ向き', () => {
