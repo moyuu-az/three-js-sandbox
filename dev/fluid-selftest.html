@@ -24,7 +24,7 @@ import * as Lo from '../src/layout.js';
 import * as H from '../src/hull.js';
 import * as F from '../src/flooding.js';
 import { buildShipGrid, gridSpec, breachAt } from '../src/shipgrid.js';
-import { createFluid, fluidParams, OPEN_INFLOW, OPEN_CLOSED } from '../src/gpu/fluid.js';
+import { createFluid, fluidParams, OPEN_INFLOW, OPEN_CLOSED, OPEN_OUTFLOW } from '../src/gpu/fluid.js';
 
 const out = document.getElementById('out');
 const log = (s, cls = '') => { out.innerHTML += `<span class="${cls}">${s}</span>\n`; };
@@ -260,6 +260,36 @@ if (window.ONLY1) { window.done = true; throw new Error('only1'); }
   check('流入: 生成した数 = 生きている粒子 + 船外へ出た粒子', ps.length + (st?.killed ?? 0) === spawned, `生成 ${spawned}, 生存 ${ps.length}, 船外 ${st?.killed}`);
   check('流入: 船外へ出たのは 2% 未満（噴流が船内に入る）', (st?.killed ?? 0) < spawned * 0.02, `${st?.killed}`);
   check('流入: 破口の部屋に溜まる', (cnt.get(o.room) ?? 0) > ps.length * 0.95, JSON.stringify([...cnt]));
+}
+
+// ---------- 5) 流出: 破口の上まで水がある部屋で、魚雷の大きさの破口（5 × 3 m）を流出（外向き 2 m/s）にする → 開口の面積 × 速さ に見合って出ていく ----------
+// 格子 0.5 m では、開口を通って格子が運べる量は与えた速さ × 面積の 25〜50%（開口が小さいほど少ない。1.6 × 1.2 m で 22%、5 × 3 m で 49%）。
+// 扉の流れが遅いのと同じ解像度の限界。流入は粒子を数えて作るので正確で、流出だけが少なめになる
+{
+  const bb = breachAt(5, 3.0, 7.5, 5, 3); // 第2缶室の舷側、高さ 1.5〜4.5 m
+  const b = buildShipGrid(h, { ...allClosed, breaches: [bb] });
+  fluid.setGrid(V.packForGpu(b.grid));
+  const o = b.openings[0];
+  const pts = [];
+  for (let n = 0; n < b.grid.N; n++) {
+    if (b.grid.type[n] !== V.NODE_FLUID || b.grid.room[n] !== o.room) continue;
+    const [i, j, k] = b.grid.coords(n);
+    if (b.grid.pos(i, j, k)[1] > 5.5) continue; // 破口の上端より 1 m 上まで
+    for (let a = 0; a < 2; a++) for (let c = 0; c < 2; c++) for (let e = 0; e < 2; e++) pts.push(i + 0.25 + a * 0.5, j + 0.25 + c * 0.5, k + 0.25 + e * 0.5);
+  }
+  fluid.init(new Float32Array(pts));
+  fluid.setOpening(0, { mode: OPEN_CLOSED });
+  await run(2); // 落ち着かせる（閉じたまま）
+  const k0 = fluid.stats?.killed ?? 0, SPEED = 2, T = 3;
+  const vel = o.normal.map((c) => (c * SPEED) / h);
+  fluid.setOpening(0, { mode: OPEN_OUTFLOW, inflow: vel, spawnVel: vel });
+  await run(T);
+  fluid.setOpening(0, { mode: OPEN_CLOSED });
+  await run(0.5);
+  const out = ((fluid.stats?.killed ?? 0) - k0) * Vp, expect = o.area * SPEED * T;
+  const ps = await particles();
+  check('流出: 外向きの速さ × 開口の面積 × 時間 に見合う水が出ていく（格子 0.5 m の解像度で 30〜120%）', out > expect * 0.3 && out < expect * 1.2, `出た水 ${out.toFixed(1)} m³ / 目安 ${expect.toFixed(1)} m³`);
+  check('流出: 閉じた後は出ていかず、粒子の数が合い、NaN も無い', !nan(ps) && ps.length + Math.round(out / Vp) === pts.length / 3, `残り ${ps.length} + 出た ${Math.round(out / Vp)} = ${pts.length / 3}`);
 }
 
 log(`\n所要 ${((performance.now() - t0) / 1000).toFixed(1)} s`);

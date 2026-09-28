@@ -51,3 +51,11 @@ test('連成: 開口部の設定は格子単位で、噴流は外向き法線の
   assert.deepEqual(p.ax, [0, 0, 2]);
   assert.deepEqual(p.ay, [0, 1, 0]);
 });
+
+test('連成: 流出（q < 0）の開口では、噴流は外向き法線の向き（船外向き）で、速さは同じ換算', () => {
+  const spec = { origin: [-4, -0.5, -15.5], h: 0.25 };
+  const o = { normal: [0, 0, -1], spawn: { center: [0, 7, 21], ax: [1, 0, 0], ay: [0, 1, 0] } };
+  const p = C.openingParams(o, { mode: 3, speed: 5, q: -2 }, spec);
+  assert.deepEqual(p.inflow.map((c) => c + 0), [0, 0, -20]);
+  assert.deepEqual(C.openingParams(o, { mode: 1, speed: 5, q: 2 }, spec).inflow.map((c) => c + 0), [0, 0, 20], '流入は船内向き');
+});

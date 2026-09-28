@@ -69,14 +69,18 @@ test('流量: 波が来て一時的に海面下になると入る', () => {
 
 // ---------- 流出（艦内の水頭が外より高い開口からは水が出ていく） ----------
 // 再現: 艦首の大破口で、噴き込んだ水が破口の上端より高く溜まり、区画の空気も +0.39 bar に縮んだまま、開口が「閉じた」扱いで固まった
-test('流出: 艦内の水位が外の海面より OUT_MARGIN を超えて高い海面下の開口は開放（水が出ていく）', () => {
-  assert.equal(F.openingFlow(hole(-2), ctx({ level: F.OUT_MARGIN + 0.05 })).mode, 'free');
-  assert.equal(F.openingFlow(hole(-2), ctx({ level: 1.5 })).q, 0, '流出では粒子を作らない');
+test('流出: 艦内の水位が外の海面より OUT_MARGIN を超えて高い海面下の開口は流出（オリフィス式の量と速さで外へ）', () => {
+  assert.equal(F.openingFlow(hole(-2), ctx({ level: F.OUT_MARGIN + 0.05 })).mode, 'outflow');
+  // 内外の水頭差 1.5 m: Q = −Cd·A·√(2g·1.5)（負 = 流出。粒子は作らない）、噴流の速さ Cv·√(2g·1.5)。
+  // 開放（自重で落ちるだけ）だと速さが艦内の水深（3.5 m）で決まり、波の中で水位が平均の海面より低めに釣り合った
+  const r = F.openingFlow(hole(-2, 0.5), ctx({ level: 1.5 }));
+  assert.ok(Math.abs(r.q + F.CD * 0.5 * Math.sqrt(2 * 9.81 * 1.5)) < 1e-9, `${r.q}`);
+  assert.ok(Math.abs(r.speed - 0.98 * Math.sqrt(2 * 9.81 * 1.5)) < 1e-9, `${r.speed}`);
 });
 
 test('流出: 閉じ込められた空気の圧力が外の水圧を超えていれば、水面が開口より低くても開放', () => {
   // 水面は開口の上 0.5 m、空気 2 m 水頭: 艦内 2.5 m ＞ 外 2 m + 余裕
-  assert.equal(F.openingFlow(hole(-2), ctx({ level: -1.5, airHead: 2 })).mode, 'free');
+  assert.equal(F.openingFlow(hole(-2), ctx({ level: -1.5, airHead: 2 })).mode, 'outflow');
 });
 
 test('流出: 釣り合いの近く（差が OUT_MARGIN 以内）は閉じた扱いのまま（開放と閉鎖を行き来しない）', () => {
@@ -92,14 +96,14 @@ test('流出: 満水の部屋（水位 +∞）の海面下の開口は開放し�
 test('流出: 海面をまたぐ開口で、艦内の水が海面より上の部分に届いていれば開放（こぼれ出る）', () => {
   const o = { area: 1, samples: [[0, -0.5, 0], [0, 0.5, 0]] };
   assert.equal(F.openingFlow(o, ctx({ level: 0.2 })).mode, 'closed', '艦内の水が海面とほぼ同じ');
-  assert.equal(F.openingFlow(o, ctx({ level: 0.9 })).mode, 'free', '艦内の水が海面より 0.9 m 高い');
+  assert.equal(F.openingFlow(o, ctx({ level: 0.9 })).mode, 'outflow', '艦内の水が海面より 0.9 m 高い');
 });
 
 test('流出: 海面より上の点だけで判定が決まるとき（波の谷）、艦内の水が届いていれば開放、届いていなければ閉じたまま', () => {
   // 海面下の点（x = 0）は波の山で外の水頭 1.2 m、艦内 1.2〜1.4 m（差 0〜0.2 m、釣り合いの近く）。海面より上の点（x = 10）は波の谷
   const o = { area: 1, samples: [[0, -0.5, 0], [10, 0.5, 0]] };
   const sea = (x) => (x > 5 ? -0.5 : 0.7);
-  assert.equal(F.openingFlow(o, ctx({ level: 0.9, sea })).mode, 'free', '海面より上の点の上に艦内の水が 0.4 m');
+  assert.equal(F.openingFlow(o, ctx({ level: 0.9, sea })).mode, 'outflow', '海面より上の点の上に艦内の水が 0.4 m');
   assert.equal(F.openingFlow(o, ctx({ level: 0.7, sea })).mode, 'closed', '海面より上の点の上の水は 0.2 m（OUT_MARGIN 以内）');
 });
 
@@ -113,7 +117,7 @@ test('流出: 海面より上の点でも艦内の圧力は空気 + 水。空気
   // 海面下の点（波の山）は外 1.3 m、艦内 1.2 + 0.2 = 1.4 m で差 0.1 m（釣り合いの近く）なので、決めているのは海面より上の点
   const sea = (x) => (x > 5 ? -0.5 : 0.8);
   const o2 = { area: 1, samples: [[0, -0.5, 0], [10, 0.5, 0]] };
-  assert.equal(F.openingFlow(o2, ctx({ level: 0.7, airHead: 0.2, sea })).mode, 'free');
+  assert.equal(F.openingFlow(o2, ctx({ level: 0.7, airHead: 0.2, sea })).mode, 'outflow');
 });
 
 test('流出: 海面より上の点が艦内の水面より上（空気の中）なら、空気の圧力が高くても水の開放の理由にならない（空気の出入りは air.js）', () => {
@@ -124,9 +128,10 @@ test('流出: 海面より上の点が艦内の水面より上（空気の中）
   assert.equal(F.openingFlow(hole(1.5), ctx({ level: 0.2, airHead: 0.7 })).mode, 'free', '全体が海面より上の開口は従来どおり開放');
 });
 
-test('流出: 満水の部屋でも、海面より上に出た開口の点からは水が出る（海面より上に水がある）', () => {
+test('流出: 満水の部屋でも、海面より上に出た開口の点からは水がこぼれる（水頭が決まらないので速さは与えず開放）', () => {
   const o = { area: 1, samples: [[0, -0.5, 0], [0, 0.5, 0]] };
-  assert.equal(F.openingFlow(o, ctx({ level: Infinity })).mode, 'free');
+  const r = F.openingFlow(o, ctx({ level: Infinity }));
+  assert.deepEqual(r, { q: 0, mode: 'free', speed: 0 }, '無限大の水頭で流出の速さを作らない');
 });
 
 test('流出: 一部の点で流入していれば流入を優先する（波の谷にかかった点から出る水と、深い点から入る水が同時にあるときは入れる）', () => {

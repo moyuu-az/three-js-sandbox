@@ -9,7 +9,7 @@ import { createSim, SEABED_Y, RHO, ENVELOPE_VOLUME, SHIP_MASS, DT, DESIGN_DRAFT 
 import { buildShipGrid, breachAt, ruptureAt, gridSpec } from './shipgrid.js';
 import * as A from './air.js';
 import { packForGpu, MAX_OPENINGS } from './voxel.js';
-import { createFluid, fluidParams, OPEN_FREE, OPEN_INFLOW, OPEN_CLOSED } from './gpu/fluid.js';
+import { createFluid, fluidParams, OPEN_FREE, OPEN_INFLOW, OPEN_CLOSED, OPEN_OUTFLOW } from './gpu/fluid.js';
 import * as F from './flooding.js';
 import { waterMassProps, openingParams } from './coupling.js';
 import * as W from './waves.js';
@@ -508,7 +508,7 @@ async function main() {
     let inflow = 0;
     flows = ops.map((o, k) => {
       const f = F.openingFlow(o, { toWorld: (p) => sim.toWorld(p), sea: sim.sea, up, level: levels[o.room], airHead: heads[o.room] });
-      const mode = f.mode === 'inflow' ? OPEN_INFLOW : f.mode === 'free' ? OPEN_FREE : OPEN_CLOSED;
+      const mode = { inflow: OPEN_INFLOW, outflow: OPEN_OUTFLOW, free: OPEN_FREE }[f.mode] ?? OPEN_CLOSED;
       fluid.setOpening(k, openingParams(o, { ...f, mode }, spec));
       if (f.q > 0 && dt > 0) {
         const s = F.particlesFor(f.q, dt, particleVolume, carry[k]);

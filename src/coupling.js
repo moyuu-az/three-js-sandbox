@@ -19,9 +19,10 @@ export function waterMassProps(moments, center, { origin, h }, particleMass) {
 // 船体座標 [m] → 格子座標（格子点 i の中心が i + 0.5）
 export const toGridCoords = (p, { origin, h }) => [(p[0] - origin[0]) / h, (p[1] - origin[1]) / h, (p[2] - origin[2]) / h];
 
-// 開口部の流量の結果を GPU の開口部の設定（格子単位）にする。噴流は開口の外向き法線の逆向き
+// 開口部の流量の結果を GPU の開口部の設定（格子単位）にする。噴流は、流入なら開口の外向き法線の逆向き、流出（q < 0）なら外向き
 export function openingParams(opening, flow, spec) {
-  const vel = opening.normal.map((c) => (-c * flow.speed) / spec.h);
+  const dir = flow.q < 0 ? 1 : -1;
+  const vel = opening.normal.map((c) => (dir * c * flow.speed) / spec.h);
   return {
     mode: flow.mode,
     inflow: vel,

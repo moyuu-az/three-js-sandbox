@@ -163,6 +163,28 @@ test('破口: 隔壁をまたぐと部屋ごとに分かれ、面積の合計は
   for (const o of openings) assert.ok(o.normal[0] > 0.9, '左舷の外向き法線');
 });
 
+test('破口: 部屋をまたぐ破口の船外側の格子点は、いちばん近い船内側の片の開口に付く（片ごとに流入・流出が違っても干渉しない）', () => {
+  // 以前は船外側を全部、一番大きい片の開口に付けていた。片 A が流入・片 B が流出のとき、B から出る水が A の設定（押し戻す）で
+  // 船外側から戻され、流出が効かずに循環した
+  for (const hh of [0.42, 0.5, 0.6]) {
+    const { grid, openings } = buildShipGrid(hh, { ...allClosed, breaches: [breachAt(5, 3.0, K[5], 7, 3.5)] });
+    assert.equal(openings.length, 2, `h=${hh}`);
+    const ins = openings.map((o) => []), outs = openings.map(() => []);
+    for (let n = 0; n < grid.N; n++) {
+      const t = grid.type[n];
+      if (t >= V.NODE_OPENING_OUT) outs[t - V.NODE_OPENING_OUT].push(grid.coords(n));
+      else if (t >= V.NODE_OPENING_IN) ins[t - V.NODE_OPENING_IN].push(grid.coords(n));
+    }
+    for (const o of openings) assert.ok(outs[o.k].length > 0, `h=${hh} ${Lo.ROOMS[o.room].name} の片に船外側が無い`);
+    const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+    const nearest = (c) => Math.min(...ins.map((list) => Math.min(...list.map((q) => d2(c, q)))));
+    for (const o of openings) for (const c of outs[o.k]) {
+      const own = Math.min(...ins[o.k].map((q) => d2(c, q)));
+      assert.equal(own, nearest(c), `h=${hh} 船外側 ${c} は近い片の開口に付いていない`);
+    }
+  }
+});
+
 test('破口: 右舷・喫水線下の破口は右舷向きで、その部屋の格子点に開く', () => {
   const b = breachAt(-5, 1.8, 16.5, 5, 3);
   // ビルジ（船底の立ち上がり）にかかる高さなので、法線は右舷の外向きで少し下を向く
