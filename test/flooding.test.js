@@ -95,6 +95,40 @@ test('流出: 海面をまたぐ開口で、艦内の水が海面より上の部
   assert.equal(F.openingFlow(o, ctx({ level: 0.9 })).mode, 'free', '艦内の水が海面より 0.9 m 高い');
 });
 
+test('流出: 海面より上の点だけで判定が決まるとき（波の谷）、艦内の水が届いていれば開放、届いていなければ閉じたまま', () => {
+  // 海面下の点（x = 0）は波の山で外の水頭 1.2 m、艦内 1.2〜1.4 m（差 0〜0.2 m、釣り合いの近く）。海面より上の点（x = 10）は波の谷
+  const o = { area: 1, samples: [[0, -0.5, 0], [10, 0.5, 0]] };
+  const sea = (x) => (x > 5 ? -0.5 : 0.7);
+  assert.equal(F.openingFlow(o, ctx({ level: 0.9, sea })).mode, 'free', '海面より上の点の上に艦内の水が 0.4 m');
+  assert.equal(F.openingFlow(o, ctx({ level: 0.7, sea })).mode, 'closed', '海面より上の点の上の水は 0.2 m（OUT_MARGIN 以内）');
+});
+
+// 再現: 海面より上の点の判定が空気の圧力を見ていなかった。水を抜いて膨らんだ（負圧の）空気が水を吊り上げていても開放になり、
+// GPU 流体は水を落とす → 空気がさらに負圧 → 流入、と開放と流入を行き来する
+test('流出: 海面より上の点でも艦内の圧力は空気 + 水。空気が負圧で外気より低ければ開放しない', () => {
+  const o = { area: 1, samples: [[0, -0.5, 0], [0, 0.5, 0]] };
+  // 海面より上の点: 水 0.4 m + 空気 −0.7 m = −0.3 m（外気より低い）。海面下の点: 1.4 − 0.7 = 0.7 m、外 0.5 m（差 0.2 m）
+  assert.equal(F.openingFlow(o, ctx({ level: 0.9, airHead: -0.7 })).mode, 'closed');
+  // 空気が正圧なら、海面より上の点の水が OUT_MARGIN より浅くても押し出される（波の谷の点: 水 0.2 m + 空気 0.2 m）。
+  // 海面下の点（波の山）は外 1.3 m、艦内 1.2 + 0.2 = 1.4 m で差 0.1 m（釣り合いの近く）なので、決めているのは海面より上の点
+  const sea = (x) => (x > 5 ? -0.5 : 0.8);
+  const o2 = { area: 1, samples: [[0, -0.5, 0], [10, 0.5, 0]] };
+  assert.equal(F.openingFlow(o2, ctx({ level: 0.7, airHead: 0.2, sea })).mode, 'free');
+});
+
+test('流出: 海面より上の点が艦内の水面より上（空気の中）なら、空気の圧力が高くても水の開放の理由にならない（空気の出入りは air.js）', () => {
+  // 海面より上の点（x = 10、波の谷）は水面 0.2 より上。空気 0.7 m。海面下の点（波の山）は外 1.3 m、艦内 0.7 + 0.7 = 1.4 m（差 0.1 m）
+  const sea = (x) => (x > 5 ? -0.5 : 0.8);
+  const o = { area: 1, samples: [[0, -0.5, 0], [10, 1.5, 0]] };
+  assert.equal(F.openingFlow(o, ctx({ level: 0.2, airHead: 0.7, sea })).mode, 'closed');
+  assert.equal(F.openingFlow(hole(1.5), ctx({ level: 0.2, airHead: 0.7 })).mode, 'free', '全体が海面より上の開口は従来どおり開放');
+});
+
+test('流出: 満水の部屋でも、海面より上に出た開口の点からは水が出る（海面より上に水がある）', () => {
+  const o = { area: 1, samples: [[0, -0.5, 0], [0, 0.5, 0]] };
+  assert.equal(F.openingFlow(o, ctx({ level: Infinity })).mode, 'free');
+});
+
 test('流出: 一部の点で流入していれば流入を優先する（波の谷にかかった点から出る水と、深い点から入る水が同時にあるときは入れる）', () => {
   const o = { area: 1, samples: [[0, -5, 0], [10, -2.9, 0]] };
   const sea = (x) => (x > 5 ? -2.5 : 0); // x = 10 の点は波の谷（海面 −2.5 m、深さ 0.4 m）

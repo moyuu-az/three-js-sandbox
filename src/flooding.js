@@ -70,13 +70,14 @@ export function openingFlow(opening, ctx, g = 9.81) {
     const w = ctx.toWorld(p);
     const hOut = Math.max(0, ctx.sea(w[0], w[2]) - w[1]);
     const water = Math.max(0, ctx.level - (ctx.up[0] * p[0] + ctx.up[1] * p[1] + ctx.up[2] * p[2])); // 点の上の艦内の水の深さ
-    if (hOut <= 0) { // 船外が空気（海面より上）: 水は入らない（空気の出入りは air.js）。艦内の水が届いていればこぼれ出る
-      if (water > OUT_MARGIN) outflow = true;
+    // 船内側の圧力 = 空気の圧力 + 水面より下なら水の重さ
+    const dh = hOut - (water + air);
+    if (hOut <= 0) { // 船外が空気（海面より上）: 水は入らない（空気の出入りは air.js）。艦内の水が届いていて、その圧力（空気込み）が
+      // 外気より OUT_MARGIN を超えて高ければこぼれ出る。空気を見ないと、膨らんで負圧になった空気が吊り上げている水まで落とす
+      if (water > 0 && -dh > OUT_MARGIN) outflow = true;
       continue;
     }
     submerged++;
-    // 船内側の圧力 = 空気の圧力 + 水面より下なら水の重さ
-    const dh = hOut - (water + air);
     if (dh > 0) { q += CD * a * Math.sqrt(2 * g * dh); headSum += dh; inflowPts++; } else if (-dh > OUT_MARGIN && !full) outflow = true;
   }
   if (q <= 0 && (submerged === 0 || outflow)) return { q: 0, mode: 'free', speed: 0 };
