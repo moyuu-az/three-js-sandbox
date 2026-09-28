@@ -17,7 +17,9 @@ const FIX = 65536; // アトミック加算用の固定小数点の倍率（WebG
 const VOLFIX = 256; // 部屋ごとの実際の体積の固定小数点の倍率（粒子 1 個の静止体積 = 256。40 万個 × 256 でも int32 に収まる）
 const WG = 256; // ワークグループのスレッド数
 const MOMENTS = 10; // 質量, Σx, Σy, Σz, Σxx, Σyy, Σzz, Σxy, Σyz, Σzx
-export const OPEN_FREE = 0, OPEN_INFLOW = 1, OPEN_CLOSED = 2; // 開口部の状態（格子点の境界条件）
+// 開口部の状態（格子点の境界条件）。FREE: 水は自重で出入り・外側で消す / INFLOW: 船内向きの噴流の速さを与える（粒子は CPU が生成）/
+// CLOSED: 壁 / OUTFLOW: 船外向きの噴流の速さを与え、外側で消す（艦内の水頭が外より高い海面下の開口。速さは flooding.openingFlow）
+export const OPEN_FREE = 0, OPEN_INFLOW = 1, OPEN_CLOSED = 2, OPEN_OUTFLOW = 3;
 const C_FREE_TOP = 0, C_HIGH = 1, C_KILLED = 2, C_REVERT = 3; // counters の添字（REVERT は壁にめり込んで戻した回数、診断用）
 
 /**
@@ -200,7 +202,7 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
     If(type.equal(NODE_SOLID).or(type.equal(NODE_EXTERIOR)), slip).ElseIf(type.greaterThanEqual(NODE_OPENING_IN), () => {
       const k = int(type).sub(NODE_OPENING_IN).mod(MAX_OPENINGS); // 開口部の番号（内側・外側とも。MAX_OPENINGS = OUT − IN）
       const s = open.state.element(k);
-      If(s.w.equal(OPEN_INFLOW), () => { v.assign(s.xyz); }).ElseIf(s.w.equal(OPEN_CLOSED), slip);
+      If(s.w.equal(OPEN_INFLOW).or(s.w.equal(OPEN_OUTFLOW)), () => { v.assign(s.xyz); }).ElseIf(s.w.equal(OPEN_CLOSED), slip);
     });
     out.assign(vec4(v, m));
   })().compute(N, [WG]);
@@ -251,13 +253,13 @@ export function createFluid(renderer, { dims, ppc = 8, maxParticles, stiffness, 
         If(vn.lessThan(0), () => { v.subAssign(n.mul(vn)); });
       });
     });
-    // 開口部の外側に出た粒子: 開放（海面より上）の開口ならこぼれ出た水として消す。流入中・閉じた開口なら戻す（外側は距離場の固体に
+    // 開口部の外側に出た粒子: 開放・流出の開口なら出ていった水として消す。流入中・閉じた開口なら戻す（外側は距離場の固体に
     // 含めていないので押し出しでは止まらない）。水が船から出られるのは開口部だけ
     const ci = int(x.x).add(int(x.y).mul(strideY)).add(int(x.z).mul(strideZ));
     const type = nodeInfo.element(ci).w.toVar();
     If(type.greaterThanEqual(NODE_OPENING_OUT), () => {
       const outMode = open.state.element(int(type).sub(NODE_OPENING_OUT).clamp(0, MAX_OPENINGS - 1)).w;
-      If(outMode.equal(OPEN_FREE), () => {
+      If(outMode.equal(OPEN_FREE).or(outMode.equal(OPEN_OUTFLOW)), () => {
         p.w.assign(0);
         const slot = atomicAdd(counters.element(C_FREE_TOP), 1);
         freeStack.element(slot).assign(pid);

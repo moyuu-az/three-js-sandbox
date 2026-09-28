@@ -3,6 +3,8 @@
 import * as V from './voxel.js';
 
 export const CD = 0.62; // 流量係数（鋭い縁のオリフィス）
+// 艦内の水頭が外をこれ [m] 超えたら開口を開放して水を出す。釣り合いの近くで開放と閉鎖を行き来しないための幅（水位の見積もりの揺れ ~0.1 m より大きく）
+export const OUT_MARGIN = 0.3;
 
 // 部屋ごとの格子点の位置（水が入れる格子点のみ）。格子を作り直すたびに作る
 export function roomNodes(grid, roomCount) {
@@ -50,26 +52,49 @@ export function waterLevel(nodes, h, volume, up, scratch = new Float32Array(node
  * 開口部 1 つの流量。samples（開口面上の点）ごとに内外の水頭差からオリフィス式 Q = Cd·A·√(2gΔh) を足す。
  * ctx.toWorld(p) → ワールド座標、ctx.sea(x, z) → 海面高さ、ctx.up（船体座標の上向き）、ctx.level（部屋の水面）、
  * ctx.airHead（部屋の空気のゲージ圧を水頭 [m] にしたもの。閉じ込められた空気が縮むと正になり流入を押し返す。省略時 0）
- * 戻り値: q [m³/s]（正 = 流入）、mode（'free' = 海面より上で開放 / 'inflow' / 'closed'）、speed = 噴流の速さ [m/s]
+ * 戻り値: q [m³/s]（正 = 流入、負 = 流出）、mode、speed = 噴流の速さ [m/s]。mode は
+ *   'inflow'  = 外の水頭が艦内より高い点がある（粒子を生成する）。同じ開口で出る点もあるときは、量の大きい向きを選ぶ
+ *   'outflow' = 艦内の水が届いていて、艦内の水頭（水 + 空気）が外より OUT_MARGIN を超えて高い点がある。その点の水頭差でオリフィス式の量と速さを出し、
+ *               GPU 流体は開口の水に外向きの速さを与えて外側で消す（自重で落とすだけだと速さが艦内の水深で決まり、
+ *               波の谷で速く出て山で遅く入るので、水位が平均の海面より低めに釣り合う）
+ *   'free'    = 開放。水の届いていない海面より上の開口（空気だけ）、または満水の部屋で海面より上に出た点（水頭が決まらないので
+ *               速さを与えず自重でこぼす）
+ *   'closed'  = 釣り合いの近く（差が OUT_MARGIN 以内。開放と閉鎖を行き来しない幅）、または満水の部屋の海面下の開口
  */
 export function openingFlow(opening, ctx, g = 9.81) {
   const pts = opening.samples;
   const a = opening.area / pts.length;
   const air = ctx.airHead ?? 0;
-  let q = 0, submerged = 0, headSum = 0, inflowPts = 0;
+  // 満水の部屋は水面が決まらない（水位 +∞）。艦内の水頭を無限大とみなして海面下の開口から出すと、流れ出ては流れ込むのを繰り返す
+  const full = ctx.level === Infinity;
+  let q = 0, submerged = 0, headSum = 0, inflowPts = 0, qOut = 0, outSum = 0, outPts = 0, spill = false, wet = false;
+  const out = (head) => { qOut += CD * a * Math.sqrt(2 * g * head); outSum += head; outPts++; };
   for (const p of pts) {
     const w = ctx.toWorld(p);
     const hOut = Math.max(0, ctx.sea(w[0], w[2]) - w[1]);
-    if (hOut <= 0) continue; // 船外が空気（海面より上）: 水は入らない（空気の出入りは air.js）
-    submerged++;
+    const water = Math.max(0, ctx.level - (ctx.up[0] * p[0] + ctx.up[1] * p[1] + ctx.up[2] * p[2])); // 点の上の艦内の水の深さ
     // 船内側の圧力 = 空気の圧力 + 水面より下なら水の重さ
-    const dh = hOut - (Math.max(0, ctx.level - (ctx.up[0] * p[0] + ctx.up[1] * p[1] + ctx.up[2] * p[2])) + air);
-    if (dh > 0) { q += CD * a * Math.sqrt(2 * g * dh); headSum += dh; inflowPts++; }
+    const dh = hOut - (water + air);
+    if (water > 0) wet = true;
+    if (hOut <= 0) { // 船外が空気（海面より上）: 水は入らない（空気の出入りは air.js）。艦内の水が届いていて、その圧力（空気込み）が
+      // 外気より OUT_MARGIN を超えて高ければ出ていく。空気を見ないと、膨らんで負圧になった空気が吊り上げている水まで落とす
+      if (water > 0 && -dh > OUT_MARGIN) { if (full) spill = true; else out(-dh); }
+      continue;
+    }
+    submerged++;
+    // 流出は水のある点だけ（海面より上の点と同じ）。艦内の水面より上の点で空気が外の水圧より高いのは泡で抜ける空気（air.js）で、
+    // 数えると水の出る速さを空気の水頭差で大きく見積もる
+    if (dh > 0) { q += CD * a * Math.sqrt(2 * g * dh); headSum += dh; inflowPts++; } else if (water > 0 && -dh > OUT_MARGIN && !full) out(-dh);
   }
-  if (submerged === 0) return { q: 0, mode: 'free', speed: 0 };
-  if (q <= 0) return { q: 0, mode: 'closed', speed: 0 };
   // 噴流の速さは縮流部の流速 Cv·√(2gΔh)（Cv ≈ 0.98）。平均の水頭で代表させる
-  return { q, mode: 'inflow', speed: 0.98 * Math.sqrt((2 * g * headSum) / inflowPts) };
+  // GPU は開口ごとに 1 つの状態しか持てない。流入と流出の点が同時にある（波の山と谷にまたがる）ときは量の大きい向きにする
+  // （流入を優先すると、ごく小さな流入の点 1 つで開口全体の速さが ~0 になり、実質は壁になってほかの点の流出まで止めた）
+  if (q > 0 && q >= qOut) return { q, mode: 'inflow', speed: 0.98 * Math.sqrt((2 * g * headSum) / inflowPts) };
+  if (outPts > 0) return { q: -qOut, mode: 'outflow', speed: 0.98 * Math.sqrt((2 * g * outSum) / outPts) };
+  // 開放は艦内の水が届いていない海面より上の開口（空気だけ）か、満水の部屋で海面より上に出た点だけ。水が届いていて釣り合いの近くなら
+  // 閉じたまま（開放すると GPU は外を空気として水を自重で落とし、負圧の空気が吊り上げている水まで抜ける）
+  if ((submerged === 0 && !wet) || spill) return { q: 0, mode: 'free', speed: 0 };
+  return { q: 0, mode: 'closed', speed: 0 };
 }
 
 // 流量を粒子の数に直す。端数は次のフレームに持ち越す（小さい流量でも止まらないように）

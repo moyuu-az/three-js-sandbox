@@ -134,12 +134,25 @@ export function buildShipGrid(h, state = {}) {
     };
     const outer = outer0.filter((n) => !foreign(n));
     const pieces = [...inner.entries()].sort((p, q) => q[1].length - p[1].length);
+    // 船外側の格子点は、いちばん近い船内側の格子点の片（部屋）の開口に付ける。片ごとに流入・流出・閉鎖が違うことがあり、
+    // 船外側の境界条件（噴流の速さ・粒子を消すか戻すか）はその片の状態に従う。全部を一番大きい片に付けると、流出する片の水が
+    // 流入する片の設定で押し戻され、同じ破口の中で水が循環した
+    const coordsOf = (n) => grid.coords(n);
+    const nearestRoom = new Map();
+    for (const n of outer) {
+      const c = coordsOf(n);
+      let best = Infinity, room = -1;
+      for (const [r, ns] of pieces) for (const m of ns) {
+        const q = coordsOf(m), d = (c[0] - q[0]) ** 2 + (c[1] - q[1]) ** 2 + (c[2] - q[2]) ** 2;
+        if (d < best) { best = d; room = r; }
+      }
+      nearestRoom.set(n, room);
+    }
     for (const [r, ns] of pieces) {
-      if (openings.length >= V.MAX_OPENINGS) { dropped++; continue; }
+      if (openings.length >= V.MAX_OPENINGS) { dropped++; continue; } // 入りきらない片の船外側は船外のまま（粒子を押し返す）
       const k = openings.length;
       for (const n of ns) type[n] = V.NODE_OPENING_IN + k;
-      // 船外側の格子点は一番大きい部屋の開口に付ける（粒子を消すだけなので番号はどれでもよい）
-      if (r === pieces[0][0]) for (const n of outer) type[n] = V.NODE_OPENING_OUT + k;
+      for (const n of outer) if (nearestRoom.get(n) === r) type[n] = V.NODE_OPENING_OUT + k;
       const pts = ns.map((n) => grid.pos(...grid.coords(n)));
       const cen = [0, 1, 2].map((a) => pts.reduce((s, p) => s + p[a], 0) / pts.length);
       const spread = (ax) => Math.max(h / 2, ...pts.map((p) => Math.abs(dot(sub(p, cen), ax))));
