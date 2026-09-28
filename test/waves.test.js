@@ -62,9 +62,10 @@ test('波: 艦の向きに沿った細長い格子（長さ × 幅）でも、�
 });
 
 test('波: 格子の間隔は最短の波長の半分より細かい（粗いと短い波がエイリアスして、うねりのように見える）', () => {
-  const ws = W.makeWaves(0.25, 4.0);
-  const shortest = Math.min(...ws.map((w) => (2 * Math.PI) / w.k));
-  assert.ok(W.HEIGHT_STEP < shortest / 2, `${W.HEIGHT_STEP} / ${shortest}`);
+  for (const s of W.SEA_STATES) { // いま最も短いのは穏やか（~4.9 m）。海況を足したときも守る
+    const shortest = Math.min(...W.makeWaves(s.hs, s.tp).map((w) => (2 * Math.PI) / w.k));
+    assert.ok(W.HEIGHT_STEP < shortest / 2, `${s.id}: ${W.HEIGHT_STEP} / ${shortest}`);
+  }
 });
 
 test('波: 軌道速度は深さとともに減る', () => {

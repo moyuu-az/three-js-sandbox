@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSim, SEABED_Y, DESIGN_DRAFT, SHIP_MASS, ENVELOPE_VOLUME, RHO, SHIP_COM, GM, CELL } from '../src/sim.js';
+import { Quaternion, Vector3 } from 'three';
+import { createSim, SEABED_Y, DESIGN_DRAFT, SHIP_MASS, ENVELOPE_VOLUME, RHO, SHIP_COM, GM, CELL, DT } from '../src/sim.js';
 import * as MP from '../src/massprops.js';
 import * as W from '../src/waves.js';
 import * as Lo from '../src/layout.js';
@@ -108,6 +109,35 @@ test('静水: 斜め（60°）を向いた艦も設計喫水で水平に浮く�
   const s = sim.state();
   assert.ok(Math.abs(s.draft - DESIGN_DRAFT) < 0.15, `喫水 ${s.draft}`);
   assert.ok(Math.abs(s.pitchDeg) < 0.5 && Math.abs(s.rollDeg) < 0.5, `${s.pitchDeg} ${s.rollDeg}`);
+});
+
+test('波の格子: 艦がどの姿勢（回頭・横倒し・艦首が上がって沈む・艦首が真上）でも、船体の全体で海面を直接計算に近く返す', async () => {
+  // 格子は艦の向きに沿った長方形で、外の点は端の値になる。艦のどこかが格子の外に出ると、そこの浮力が波を感じなくなる。
+  // 穏やかな海の喫水だけでは端の値との差が見えないので、船体を囲む箱の角・辺で海面そのものを比べる。
+  // 波は直交する 2 成分（波長 24 m・振幅 1 m・尖り 0）: 補間の誤差（~0.07 m）と、格子から 1〜2 m はみ出した点の端の値の誤差（~0.4 m）が
+  // はっきり分かれる（makeWaves の海では格子の幅を ±10 m に縮めても 0.1 m 未満の差しか出ない）
+  const k = (2 * Math.PI) / 24;
+  const wave = (a) => ({ dx: Math.cos(a), dz: Math.sin(a), k, omega: Math.sqrt(W.G * k), phase: a, amp: 1, q: 0 });
+  const waves = [wave(0.3), wave(0.3 + Math.PI / 2)];
+  const axis = (x, y, z, deg) => new Quaternion().setFromAxisAngle(new Vector3(x, y, z), (deg * Math.PI) / 180);
+  const yaw = axis(0, 1, 0, 60);
+  const poses = {
+    回頭: yaw,
+    横倒し: yaw.clone().multiply(axis(0, 0, 1, 90)),
+    '艦首が上がって沈む': axis(0, 1, 0, 150).multiply(axis(1, 0, 0, -45)),
+    艦首が真上: yaw.clone().multiply(axis(1, 0, 0, -90)), // 艦首の向きが水平面で決まらない
+  };
+  for (const [name, q] of Object.entries(poses)) {
+    const sim = await createSim({ waves });
+    sim.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+    sim.step(); // 海面の格子は step の頭で、その時刻（sim.time − DT）について作る
+    let e = 0;
+    for (const x of [-H.B / 2, H.B / 2]) for (const y of [0, H.Y_MAX]) for (let z = H.Z_MIN; z <= H.Z_MAX; z += 2) {
+      const w = sim.toWorld([x, y, z]);
+      e = Math.max(e, Math.abs(sim.sea(w[0], w[2]) - W.heightAt(waves, w[0], w[2], sim.time - DT, 3)));
+    }
+    assert.ok(e < 0.15, `${name}: 誤差 ${e.toFixed(3)} m（振幅 1 m の 2 成分）`);
+  }
 });
 
 test('復原性: 横に傾けても元に戻る（GM が正）', async () => {
