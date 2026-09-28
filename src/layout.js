@@ -65,13 +65,15 @@ export const ROOMS = [
 // 敷居 SILL: 水密扉の下端は床より高い（実艦で 0.3〜0.4 m）。床の高さから抜くと、扉の範囲に入った床（下甲板）の格子点まで抜ける。
 // 床の格子点は板の面から最大で半格子（h = 0.6 で 0.3 m）上に来るので、それより高くする
 const SILL = 0.35;
-const wtDoor = (id, name, z, y0, x = 0) => ({ id, name, wt: true, open: false, box: { x: [x - 0.8, x + 0.8], y: [y0 + SILL, y0 + SILL + 1.9], z: [z - 0.3, z + 0.3] } });
+const wtDoor = (id, name, z, y0, x = 0, sill = SILL) => ({ id, name, wt: true, open: false, box: { x: [x - 0.8, x + 0.8], y: [y0 + sill, y0 + sill + 1.9], z: [z - 0.3, z + 0.3] } });
 const yAround = (y) => (typeof y === 'number' ? [y - 0.4, y + 0.4] : [`${y}-0.4`, `${y}+0.4`]);
 const hatch = (id, name, y, z, x, wt = false) => ({ id, name, ...(wt ? { wt, open: false } : {}), box: { x: [x - 0.6, x + 0.6], y: yAround(y), z: [z - 0.6, z + 0.6] } });
 export const DOORS = [
   wtDoor('D1', '水密扉 前部倉庫↔前部兵員室 1', K2, LOWER),
   wtDoor('D2', '水密扉 前部兵員室 1↔2', K3, LOWER),
-  wtDoor('D3', '水密扉 前部↔後部機械室', K9, TANK_TOP, -1.8),
+  // D3 の床は板ではなく二重底の天板（抜ける格子点が無い）ので敷居を付けない。格子 0.5 m では 0.35 m の敷居が最下層を塞いで実効 0.4〜0.9 m に
+  // なり、扉の流れが半分以下になる（dev/fluid-selftest の「扉」「空気圧」が落ちた）
+  wtDoor('D3', '水密扉 前部↔後部機械室', K9, TANK_TOP, -1.8, 0),
   wtDoor('D4', '水密扉 後部兵員室 1↔2', K11, LOWER),
   wtDoor('D5', '水密扉 後部兵員室 2↔士官室', K12, LOWER),
   wtDoor('D6', '水密扉 士官室↔艦長室', K13, LOWER),
