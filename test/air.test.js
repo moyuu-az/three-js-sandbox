@@ -225,9 +225,12 @@ test('外板: 実艦の外板の点は船外に接し、甲板は上向き、閉
   assert.ok(hatch.length > 0 && hatch.every((p) => inRange(p, S.closure) && p.room === R('後部機械室')), '後部機械室の天窓');
   // 船首楼の後端壁（後ろ向き）は外板の強度
   assert.ok(pts.some((p) => p.n[2] === -1 && Lo.ROOMS[p.room].comp === 'FC' && inRange(p, S.hull)), '船首楼の後端壁');
-  // 開いているハッチは船外とつながる開口なので弱点にならない
-  const envOpen = A.envelopePoints(buildShipGrid(h, { seaOpenings: { o8: true, o11: true } }).grid, Lo.ROOMS.length, A.strengthOf([]));
-  assert.ok(envOpen.closure.every((c) => c === null));
+  // 弱点になるのは閉じた開口だけ。後部機械室の天窓 o8 を開け、船首楼の昇降口 o1 を閉じると、弱点は o1 だけになる
+  // （開いた開口の周りは開口の格子点で、外板の点にならない。main.js と同じく閉じた開口だけを strengthOf に渡す）
+  const state = { o1: false, o8: true, o11: true };
+  const closedNow = Lo.SEA_OPENINGS.filter((o) => !(state[o.id] ?? o.open));
+  const env2 = A.envelopePoints(buildShipGrid(h, { seaOpenings: state }).grid, Lo.ROOMS.length, A.strengthOf(closedNow));
+  assert.deepEqual([...new Set(env2.closure.filter(Boolean))], ['o1']);
 });
 
 test('外板の荷重: 深く沈んだ密閉の空の部屋は内向き、閉じ込めた空気が海面より上の外板を外向きに押す', () => {

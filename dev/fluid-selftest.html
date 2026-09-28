@@ -46,7 +46,7 @@ if (Q0.has('only1')) window.ONLY1 = true;
 if (!renderer.backend.isWebGPUBackend) { log('WebGPU が使えません', 'ng'); throw new Error('no webgpu'); }
 const device = renderer.backend.device;
 const qs = new URLSearchParams(location.search);
-const fluid = createFluid(renderer, { dims: spec.dims, ppc: PPC, maxParticles: 393216, stiffness, ...(qs.has('mu') ? { viscosity: +qs.get('mu') } : {}), ...(qs.has('bulk') ? { bulkViscosity: +qs.get('bulk') } : {}) });
+const fluid = createFluid(renderer, { dims: spec.dims, ppc: PPC, maxParticles: 393216, /* 1 室ずつ満たす検証なので、どの格子間隔でも足りる（最大は h = 0.42 の機械室 50% で ~2.5 万個） */ stiffness, ...(qs.has('mu') ? { viscosity: +qs.get('mu') } : {}), ...(qs.has('bulk') ? { bulkViscosity: +qs.get('bulk') } : {}) });
 
 // 部屋 room の下から fraction の高さまで、格子点ごとに PPC 個の粒子を置く（格子座標）
 function fillRoom(grid, room, fraction) {

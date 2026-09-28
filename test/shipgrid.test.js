@@ -4,6 +4,7 @@ import * as V from '../src/voxel.js';
 import * as Lo from '../src/layout.js';
 import * as H from '../src/hull.js';
 import { buildShipGrid, breachAt, ruptureAt } from '../src/shipgrid.js';
+import * as A from '../src/air.js';
 
 const h = 0.5; // 標準画質の格子間隔
 const K = Lo.BULKHEADS;
@@ -108,6 +109,32 @@ test('格子: 水密扉・水密ハッチは開けると名前の 2 室の区画
       assert.ok(reach(g, nodeIn(g, a)).has(b), `h=${hh} ${d.id}: 開けても ${a} から ${b} へ届かない`);
       assert.ok(!reach(closed, nodeIn(closed, a)).has(b), `h=${hh} ${d.id}: 閉じても ${a} から ${b} へ届く`);
     }
+  }
+});
+
+test('格子: 隔壁の扉（水密扉・船首楼の仕切り扉）を開けても、床の板（下甲板・上甲板）の格子点は抜けない（敷居）', () => {
+  // 以前は扉の範囲が床の高さちょうどから始まり、格子点の並び方によって扉の下の床の格子点まで抜けていた。
+  // 全部の扉を開けた格子で、扉の真下（扉の x・z の範囲）にある床の板の層の格子点が固体のままかを直接見る
+  // （閉じた格子との差で見ると、常に開いている船首楼の仕切り扉 c1 は差に出ず、確かめられない）
+  const walls = Lo.DOORS.filter((d) => d.box.z[1] - d.box.z[0] < 1); // 隔壁（z の板）の扉。ハッチは除く
+  const inSpan = (s, x, z) => (!s.x || (x >= s.x[0] && x <= s.x[1])) && (!s.z || (z >= s.z[0] && z <= s.z[1]));
+  for (const hh of [0.42, 0.5, 0.6]) {
+    const g = buildShipGrid(hh, { ...allClosed, doors: Object.fromEntries(Object.keys(allClosed.doors).map((k) => [k, true])) }).grid;
+    const layer = (y) => Math.round((y - g.origin[1]) / hh - 0.5); // shipgrid.js の板の層の決め方
+    const checked = new Set();
+    for (let n = 0; n < g.N; n++) {
+      const [i, j, k] = g.coords(n);
+      const [x, y, z] = g.pos(i, j, k);
+      // その扉の床 = 扉の真下で、扉の下端に近い（z = K3 には下甲板の D2 と、その上の上甲板の c1 が同じ列にある）
+      const d = walls.find((w) => x >= w.box.x[0] && x <= w.box.x[1] && z >= w.box.z[0] && z <= w.box.z[1] && Math.abs(Lo.resolveY(w.box.y[0], z) - y) < 1);
+      if (!d || !H.inside(x, y, z)) continue;
+      if (!Lo.PLATES.some((q) => q.axis === 'y' && inSpan(q.span, x, z) && j === layer(Lo.resolveY(q.at, z)))) continue;
+      checked.add(d.id);
+      assert.equal(g.type[n], V.NODE_SOLID, `h=${hh} ${d.id} が床の格子点 (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}) を抜いた`);
+    }
+    // 空振りしていない。D3 の床は二重底の天板（板ではなく y < TANK_TOP の固体）。D1 は前側（前部倉庫）に下甲板が無く、後ろ側の
+    // 下甲板は z = K2 までなので、格子間隔によっては扉の範囲に床の格子点が無い
+    for (const id of ['D2', 'D4', 'D5', 'D6', 'c1']) assert.ok(checked.has(id), `h=${hh} ${id} の床を確かめていない`);
   }
 });
 
@@ -288,6 +315,58 @@ test('破断: 上甲板の穴は上向きの面、u・v・法線は直交する�
   assert.equal(Lo.ROOMS[o[0].room].name, '士官室');
   assert.equal(o[0].name, '破裂（士官室）');
   assert.ok(Math.abs(o.reduce((s, x) => s + x.area, 0) - 0.64) < 1e-9, '面積 0.8 × 0.8');
+});
+
+// 画質ごとの外板の点（格子の作成が重いので 2 つのテストで使い回す）
+const envelopes = new Map();
+const envelopeAt = (hh) => {
+  if (!envelopes.has(hh)) {
+    const { grid } = buildShipGrid(hh);
+    const env = A.envelopePoints(grid, Lo.ROOMS.length, A.strengthOf([]));
+    envelopes.set(hh, Array.from({ length: env.room.length }, (_, i) => A.envelopePoint(env, i)));
+  }
+  return envelopes.get(hh);
+};
+
+test('破断: 外板のどの点の穴も、格子の面の船外向きと同じ側を向く（艦尾の丸い先端で真横を向かない）', () => {
+  // 再現: 船体の範囲の外（z < Z_MIN）で数値微分した法線は z 成分が捨てられて ±x になり、艦尾の先端の破断が横向きの穴になった。
+  // 甲板の反りの段（格子の面は ±z、船外側の格子点は甲板の上）でも同じく、舷側の法線（±x）の横向きの穴になった
+  let tip = 0;
+  for (const hh of [0.42, 0.5, 0.6]) {
+    let worst = 1, at = null;
+    for (const pt of envelopeAt(hh)) {
+      const b = ruptureAt(pt.p, pt.n, 0.8);
+      const d = dot3(b.normal, pt.n);
+      if (d < worst) { worst = d; at = pt; }
+      if (pt.p[2] < H.Z_MIN) { tip++; assert.ok(b.normal[2] < -0.9, `h=${hh} 艦尾の先端 ${pt.p} の穴が後ろを向かない: ${b.normal}`); }
+    }
+    // 正しい曲面の法線でも、段になった格子の面とはほぼ直角（内積 0.007 程度）になることがあるので、しきい値は 0 にする
+    assert.ok(worst > 0, `h=${hh} 最悪 ${worst.toFixed(3)} @ ${at?.p.map((v) => v.toFixed(2))} 格子 ${at?.n}`);
+  }
+  assert.ok(tip > 0, '艦尾の先端（z < Z_MIN）の外板の点が無い（テストの前提。格子の並びによっては無い画質もある）');
+});
+
+test('破断: 艦首・艦尾の絞りの舷側では、格子の面が段で ±z を向いていても、穴は外板に沿って横を向く', () => {
+  // 再現: 曲面の法線と格子の向きの内積が 0.3 未満なら格子の向きにする判定で、絞りの舷側（外板はほぼ前後方向）の ±z の段の面の
+  // 穴が真後ろ・真前を向き、破口のデカールが外板から垂直に突き出た
+  for (const hh of [0.42, 0.5, 0.6]) {
+    let n = 0;
+    for (const pt of envelopeAt(hh)) {
+      const [x, y, z] = pt.p;
+      if (pt.n[2] === 0) continue;
+      const hb = H.halfBreadth(z, y);
+      // 外板の上かわずかに内側（甲板・船底から離れた舷側）で、外板がほぼ前後方向（半幅の z 方向の傾きが 0.15 未満 = 約 8.5° 以内）の点。
+      // 外板よりわずかに外の段の面は、船内側へ 0.2 m 戻った点が船体の外になり格子の向きのまま（onHull の判定。別の既存の扱い）。
+      // 上甲板より上（船首楼の舷側）は、後端壁の近くを格子の向きのままにする判定（fcWall）に入るので見ない
+      if (!(Math.abs(x) <= hb && hb - Math.abs(x) < 0.1 && y > H.keelY(z) + 1 && y < H.upperY(z) - 0.5)) continue;
+      if (!(Math.abs(H.halfBreadth(z + 0.25, y) - H.halfBreadth(z - 0.25, y)) / 0.5 < 0.15)) continue;
+      n++;
+      const b = ruptureAt(pt.p, pt.n, 0.8);
+      // 外板の前後の傾きが 0.15 未満なので、穴の法線の z 成分も小さい（ビルジでは下向きの成分があるので y は見ない）
+      assert.ok(Math.sign(x) * b.normal[0] > 0 && Math.abs(b.normal[2]) < 0.2, `h=${hh} ${pt.p.map((v) => v.toFixed(2))} 格子 ${pt.n}: 穴 ${b.normal.map((v) => v.toFixed(2))}`);
+    }
+    assert.ok(n > 0, `h=${hh} 絞りの舷側の ±z の段の面が無い（テストの前提）`);
+  }
 });
 
 test('破断: 舷側の穴は船体の曲面の法線（外向き）を使い、格子の向き（±x）とほぼ同じ向き', () => {

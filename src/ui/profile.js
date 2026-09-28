@@ -34,6 +34,9 @@ export function pressureSlot(q) {
   return q.y1 - q.y0 >= PRES_MIN_H ? { x: q.z0 + 0.3, y: q.y1 - PRES_ROW } : null;
 }
 
+// 喫水線を描く前後の端（船体座標の z）。呼び出し側はこの 2 点で海面の高さを求めて update に渡す
+export const WL_Z = [H.Z_MIN - 1.5, H.Z_MAX + 1.5];
+
 export function createProfile(svg, { onDoor }) {
   svg.setAttribute('viewBox', `${H.Z_MIN - 1.5} ${-H.Y_MAX - 1.2} ${H.L + 3} ${H.Y_MAX + 2.4}`);
   const g = el('g', { transform: 'scale(1,-1)' }, svg); // y を上向きに
@@ -58,7 +61,7 @@ export function createProfile(svg, { onDoor }) {
   });
   for (const z of Lo.BULKHEADS) el('line', { class: 'bulk', x1: z, x2: z, y1: Math.max(H.TANK_TOP, H.keelY(z)), y2: H.upperY(z) }, g);
   el('line', { class: 'bulk', x1: Lo.MACHINERY.z[0], x2: Lo.MACHINERY.z[1], y1: H.TANK_TOP, y2: H.TANK_TOP }, g);
-  const wl = el('line', { class: 'wl', x1: H.Z_MIN - 1.5, x2: H.Z_MAX + 1.5 }, g);
+  const wl = el('line', { class: 'wl', x1: WL_Z[0], x2: WL_Z[1] }, g);
 
   // 扉（水密扉と船外への開口）
   const doors = new Map();
